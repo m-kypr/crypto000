@@ -132,7 +132,7 @@ def api():
                 price = tk['buy']
             if not cY: 
                 if price < avg:
-                    open(f'log/{filesafe_pair}', 'a').write(f'buying at price {price}\n\n')
+                    open(f'log/{filesafe_pair}', 'a').write(f'\n\nbuying at price {price}\n\n')
                     # print()
                     # print('buying at price', price)
                     cY = price
@@ -142,7 +142,7 @@ def api():
                     # print()
                     # print('selling at price', price)    
                     profit = price - cY
-                    open(f'log/{filesafe_pair}', 'a').write(f'selling at price {price}   profit={profit}\n\n')
+                    open(f'log/{filesafe_pair}', 'a').write(f'\n\nselling at price {price}   profit={profit}\n\n')
                     cY = None
                     sells.append(timestamp)
             if cY:
