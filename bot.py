@@ -1,7 +1,24 @@
 import ccxt
 # import matplotlib.pyplot as plt
 import numpy as np
+import json
+from os.path import isfile
+from queue import Queue
 # import scipy.signal as scipy
+
+def get_pairs(exchange, path='', save=True, curr='usdt'):
+    ret = [x for x in list(exchange.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
+    if save: 
+        if path == '': 
+            path = f'pairs_json/kucoin_{curr}.json'
+        open(path, 'w').write(json.dumps(ret))
+    return ret
+
+
+def local_pairs(path='', curr='usdt'):
+    if path == '':
+        path = f'pairs_json/kucoin_{curr}.json'
+    return json.loads(open(path, 'r').read())
 
 def rmean(a, n):
     ret = np.cumsum(a, dtype=float)
@@ -10,6 +27,25 @@ def rmean(a, n):
     return ret, len(ret)
     # return ret[n - 1:] / n
 
+def sma(x, n):
+    return np.convolve(x, np.ones(n), 'valid') / n
+
+
+def ema(x, n):
+    alpha = 2 /(n + 1.0)
+    alpha_rev = 1-alpha
+    n = x.shape[0]
+
+    pows = alpha_rev**(np.arange(n+1))
+
+    scale_arr = 1/pows[:-1]
+    offset = x[0]*pows[1:]
+    pw0 = alpha*alpha_rev**(n-1)
+
+    mult = x*pw0*scale_arr
+    cumsums = mult.cumsum()
+    out = offset + cumsums*scale_arr[::-1]
+    return out
 
 def some_shit():
     pairs = get_pairs()
@@ -93,19 +129,6 @@ def some_shit():
 
 
 def api():
-    import json
-    def get_pairs(exchange, path='', save=True, curr='usdt'):
-        ret = [x for x in list(exchange.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
-        if save: 
-            if path == '': 
-                path = f'pairs_json/kucoin_{curr}.json'
-            open(path, 'w').write(json.dumps(ret))
-        return ret
-    def local_pairs(path='', curr='usdt'):
-        if path == '':
-            path = f'pairs_json/kucoin_{curr}.json'
-        return json.loads(open(path, 'r').read())
-
     def worker(pair):
         # print(pair)
         clock = int(time.time() * 1000) # milliseconds unix time
@@ -171,7 +194,6 @@ def api():
     ex = ccxt.kucoin(config=args)
     # r = get_pairs(ex)
     # X = np.arange(0, len(Y), 1)
-    from os.path import isfile
     if isfile('pairs_json/kucoin_usdt.json'):
         r = local_pairs()
     else:
@@ -216,11 +238,171 @@ def api():
     plt.show()
     
 
+def betterma(): 
+    
+    key = json.loads(open('key.json', 'r').read())
+    args = {
+    'apiKey': key['apiKey'],
+    'secret': key['secret'],
+    'passphrase': key['passphrase'],
+    'timeout': 50000,
+    'enableRateLimit': True,
+    }
+    ex = ccxt.kucoin(config=args)
+
+    if isfile('pairs_json/kucoin_usdt.json'):
+        r = local_pairs()
+    else:
+        r = get_pairs(ex)
+
+    sp = 1
+    pair = r[0]
+    pair_filesafe = pair.replace('/', '-')
+    if isfile(f'ohlc_json/{pair_filesafe}.json'):
+        print('using local data')
+        ohlc = json.loads(open(f'ohlc_json/{pair_filesafe}.json', 'r').read())
+    else:
+        print('downloading from network')
+        ohlc = ex.fetchOHLCV(pair)
+        open(f'ohlc_json/{pair_filesafe}.json', 'w').write(json.dumps(ohlc))
+
+    
+    Y_orig = np.array([x[4] for x in ohlc])
+    Y = Y_orig[:-sp]
+    X_orig = np.arange(len(Y_orig))
+    X = X_orig[:-sp]
+    
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as anim
+    
+    emabasenumber = 10
+    emas = [j * 3 for j in range(20)][2:]
+    stake = [0 for x in emas]
+    profit = [0 for x in emas]
+    offset = max(emas)
+    y = list(Y_orig[:offset])
+    fig, ax = plt.subplots()
+    # fig = plt.figure()
+    # ax = fig.add_subplot(1,1,1)
+
+
+    def algo(emas, i): 
+        i += offset
+        y.append(Y[i])
+        emabase = ema(np.array(y), emabasenumber)
+        emaYs = [ema(np.array(y), e) for e in emas]
+        emadiffs = [eY - emabase for eY in emaYs]
+        emasigndiffs = [np.diff(np.sign(emadiff)) for emadiff in emadiffs]
+        sells = [((emasigndiff < 0)*1).astype('float') for emasigndiff in emasigndiffs]
+        buys = [((emasigndiff > 0)*1).astype('float') for emasigndiff in emasigndiffs]
+        for j in range(len(emas)):
+            sells[j][sells[j] == 0] = np.nan
+            buys[j][buys[j] == 0] = np.nan
+        for j in range(len(emas)):
+            if buys[j][-1] == 1.0:
+                print(len(y), emas[j], 'buy signal at price', y[-1])
+                if stake[j] == 0: 
+                    print(len(y), emas[j], 'buying at', y[-1])
+                    stake[j] = y[-1]
+            if sells[j][-1] == 1.0: 
+                print(len(y), emas[j], 'sell signal at price', y[-1])
+                if stake[j] != 0: 
+                    potential_profit = y[-1] - stake[j]
+                    # potential_profit = 1
+                    if potential_profit > 0:
+                        profit[j] = y[-1] - stake[j]
+                        print(len(y), emas[j], 'selling at', y[-1], 'new profit:', profit[j])
+                        stake[j] = 0
+                    else:
+                        print(len(y), emas[j], 'not selling because (-) profit')
+        return emadiffs, buys, sells, profit
+
+
+    def run_live(q, ema, Y, offset=0): 
+        y = Y[offset:]
+        i = 0
+        while True: 
+            y[i]
+
+
+
+    def start_animation(emas):
+        def update(i):
+            emadiffs, buys, sells = algo(emas, i)
+            avg = sum(y) / len(y)
+            ax.clear()
+            x = range(len(y))
+            ax.plot(x, y)
+            ax.axhline(y=avg, color='gray', linestyle='dashed')
+            for j in range(len(emas)):
+                ax.plot(x, emadiffs[j] + avg, label=f'{emas[j]}')
+            for j in range(len(emas)):
+                # ax.scatter(x[:-1], buys[j] + avg - 1, s=15, color='green', label=f'{emas[j]}')
+                # ax.scatter(x[:-1], sells[j] + avg - 1, s=15, color='red', label=f'{emas[j]}')
+                ax.scatter(x[:-1], buys[j] + avg - 1, s=15, color='green')
+                ax.scatter(x[:-1], sells[j] + avg - 1, s=15, color='red')
+            ax.legend()
+
+        a = anim.FuncAnimation(fig, update, frames=1000, repeat=False)
+        plt.show()
+
+    for it in range(len(Y) - offset):
+        algo(emas, it)
+        # for j in range(len(emas)):
+        #     print(profit[j])
+    print([f'{emas[j]} profit: {profit[j]}' for j in range(len(emas))])
+    idx = profit.index(max(profit))
+    roi = profit[idx] / y[-1]
+    print(len(y) - offset, emas[idx], profit[idx], 100 * roi, '% per day', pow(1 + roi, 30))
+    # start_animation([emas[idx]])
+    quit()
+    avg = sum(Y) / len(Y)
+    emaY1 = ema(Y, 40)
+    emaY2 = ema(Y, 20)
+    emadiff = emaY2 - emaY1
+
+    emasigndiff = np.diff(np.sign(emadiff))
+    zc_neg = ((emasigndiff < 0)*1).astype('float')
+    zc_pos = ((emasigndiff > 0)*1).astype('float')
+
+    zc_neg[zc_neg == 0] = np.nan
+    zc_pos[zc_pos == 0] = np.nan
+
+    # zc_pos = emadiffsc[0::2]
+    # zc_pos[zc_pos == 0] = np.nan
+    # zc_neg = emadiffsc[1::2]
+    print(len(X), len(zc_pos), len(zc_neg))
+    
+    ax.axhline(y=avg, color='gray', linestyle='dashed')
+    ax.plot(X, Y, color='blue')
+    ax.plot(X, emadiff + avg)
+    ax.scatter(X[:-1], zc_pos + avg - 1, color='green')
+    ax.scatter(X[:-1], zc_neg + avg - 1, color='red')
+
+    idx = np.where(zc_neg == 1, np.arange(0, len(zc_neg), 1), 0).astype('int')
+    prices = Y[idx]
+    print(len(prices), prices)
+    plt.show()
+    quit()
+    for i, txt in enumerate(prices):
+        ax.annotate(txt, (X[i], zc_neg[i] + avg - 1))
+    ax.plot(Y, color='black')
+    ax.plot(X_orig[-sp:], Y_orig[-sp:], color='black', linestyle='dotted')
+    ax.plot(emadiff + avg, color='blue')
+    ax.plot(np.full_like(Y, avg), color='gray', linestyle='--')
+    ax.fill_between(X, emaY1, emaY2, where=(emaY2 > emaY1), color='green')
+    ax.fill_between(X, emaY1, emaY2, where=(emaY1 > emaY2), color='red')
+    plt.show()
+
+
 
 
 
 if __name__ == '__main__': 
+    betterma()
+    quit()
     api()
+
     quit()
     # pairs = get_pairs(path='pairs_json/kraken', save=True)
     # data =download_data(pair, f'ohlc_json/{pair}')
