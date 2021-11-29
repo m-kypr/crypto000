@@ -2,3 +2,4 @@ ccxt
 numpy
 scipy
 matplotlib
+Flask
