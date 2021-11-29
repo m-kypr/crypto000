@@ -65,17 +65,29 @@ class Trader:
         alpha = 2 /(n + 1.0)
         alpha_rev = 1-alpha
         n = x.shape[0]
-
         pows = alpha_rev**(np.arange(n+1))
-
         scale_arr = 1/pows[:-1]
         offset = x[0]*pows[1:]
         pw0 = alpha*alpha_rev**(n-1)
-
         mult = x*pw0*scale_arr
         cumsums = mult.cumsum()
         out = offset + cumsums*scale_arr[::-1]
         return out
+
+    @staticmethod
+    def ema2(s, n):
+        s = np.array(s)
+        ema = []
+        j = 1
+        sma = sum(s[:n]) / n
+        multiplier = 2 / float(1 + n)
+        ema.append(sma)
+        ema.append(( (s[n] - sma) * multiplier) + sma)
+        for i in s[n+1:]:
+            tmp = ( (i - ema[j]) * multiplier) + ema[j]
+            j = j + 1
+            ema.append(tmp)
+        return ema
 
 
     def populate_signal_queue(self, b:int, e:int, pair: str, signal_queue: Queue, ydata=list(), offset=0) -> None:
@@ -95,8 +107,8 @@ class Trader:
                 latencies.append(int(now - ts))
                 ydata.append([n[0], 0, n[1], n[2], (n[4] + n[5]) / 2, n[6]]) 
                 y = np.array([n[4] for n in ydata])
-                emabase = Trader.ema(y, b)
-                emaY = Trader.ema(y, e)
+                emabase = Trader.ema2(y, b)
+                emaY = Trader.ema2(y, e)
                 emadiff = emaY - emabase
                 emasigndiff = np.diff(np.sign(emadiff))
                 sell = ((emasigndiff < 0) * 1).astype('float')
@@ -277,20 +289,30 @@ def server(trader: Trader):
         </h2>"""
     @app.route("/pps")
     def pps():
-        return jsonify(trader.get_profit_per_second())
+        r = jsonify(trader.get_profit_per_second())
+        r.headers.add('Access-Control-Allow-Origin', '*')
+        return r
     @app.route("/log")
     def log():
-        return jsonify(trader.log)
+        r = jsonify(trader.log)
+        r.headers.add('Access-Control-Allow-Origin', '*')
+        return r
     @app.route("/trades")
     def trades():
-        return jsonify(trader.past_trades)
+        r = jsonify(trader.past_trades)
+        r.headers.add('Access-Control-Allow-Origin', '*')
+        return r
     @app.route("/profit")
     def profit():
-        return jsonify(trader.profit)
+        r = jsonify(trader.profit)
+        r.headers.add('Access-Control-Allow-Origin', '*')
+        return r
     @app.route("/signals")
     def signals():
-        return jsonify(trader.signals)
-    app.run(host='0.0.0.0', port=5566)
+        r = jsonify(trader.signals)
+        r.headers.add('Access-Control-Allow-Origin', '*')
+        return r
+    app.run(host='0.0.0.0', port=3333)
 
 
 
