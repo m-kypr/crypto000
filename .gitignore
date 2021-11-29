@@ -6,3 +6,4 @@ pairs_json/*
 past_trades/*
 test.py
 bot.py
+plot.py
