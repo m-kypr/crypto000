@@ -1,5 +1,4 @@
 ccxt 
 numpy
-scipy
-matplotlib
 Flask
+numba

@@ -9,6 +9,98 @@ import os
 import ccxt.kucoin
 import numpy as np
 
+from numba import jit
+from numba import float64
+from numba import int64
+
+
+@jit((float64[:], int64), nopython=True, nogil=True)
+def _ewma(arr_in, window):
+    r"""Exponentialy weighted moving average specified by a decay ``window``
+    to provide better adjustments for small windows via:
+
+        y[t] = (x[t] + (1-a)*x[t-1] + (1-a)^2*x[t-2] + ... + (1-a)^n*x[t-n]) /
+               (1 + (1-a) + (1-a)^2 + ... + (1-a)^n).
+
+    Parameters
+    ----------
+    arr_in : np.ndarray, float64
+        A single dimenisional numpy array
+    window : int64
+        The decay window, or 'span'
+
+    Returns
+    -------
+    np.ndarray
+        The EWMA vector, same length / shape as ``arr_in``
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> a = np.arange(5, dtype=float)
+    >>> exp = pd.DataFrame(a).ewm(span=10, adjust=True).mean()
+    >>> np.array_equal(_ewma_infinite_hist(a, 10), exp.values.ravel())
+    True
+    """
+    n = arr_in.shape[0]
+    ewma = np.empty(n, dtype=float64)
+    alpha = 2 / float(window + 1)
+    w = 1
+    ewma_old = arr_in[0]
+    ewma[0] = ewma_old
+    for i in range(1, n):
+        w += (1-alpha)**i
+        ewma_old = ewma_old*(1-alpha) + arr_in[i]
+        ewma[i] = ewma_old / w
+    return ewma
+
+
+@jit((float64[:], int64), nopython=True, nogil=True)
+def _ewma_infinite_hist(arr_in, window):
+    r"""Exponentialy weighted moving average specified by a decay ``window``
+    assuming infinite history via the recursive form:
+
+        (2) (i)  y[0] = x[0]; and
+            (ii) y[t] = a*x[t] + (1-a)*y[t-1] for t>0.
+
+    This method is less accurate that ``_ewma`` but
+    much faster:
+
+        In [1]: import numpy as np, bars
+           ...: arr = np.random.random(100000)
+           ...: %timeit bars._ewma(arr, 10)
+           ...: %timeit bars._ewma_infinite_hist(arr, 10)
+        3.74 ms ± 60.2 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
+        262 µs ± 1.54 µs per loop (mean ± std. dev. of 7 runs, 1000 loops each)
+
+    Parameters
+    ----------
+    arr_in : np.ndarray, float64
+        A single dimenisional numpy array
+    window : int64
+        The decay window, or 'span'
+
+    Returns
+    -------
+    np.ndarray
+        The EWMA vector, same length / shape as ``arr_in``
+
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> a = np.arange(5, dtype=float)
+    >>> exp = pd.DataFrame(a).ewm(span=10, adjust=False).mean()
+    >>> np.array_equal(_ewma_infinite_hist(a, 10), exp.values.ravel())
+    True
+    """
+    n = arr_in.shape[0]
+    ewma = np.empty(n, dtype=float64)
+    alpha = 2 / float(window + 1)
+    ewma[0] = arr_in[0]
+    for i in range(1, n):
+        ewma[i] = arr_in[i] * alpha + ewma[i-1] * (1 - alpha)
+    return ewma
+
 
 class Trader: 
     def __init__(self, exchange) -> None:
@@ -24,6 +116,7 @@ class Trader:
         self.past_trades = []
         self.log = []
         self.signals = []
+        self.profit = 0
         self.ssid = int(time.time() * 1000)
         self.ex = exchange(config=args)
         self.ticker_interval = 5
@@ -32,6 +125,7 @@ class Trader:
         self.saving_batch_size = 32
         self.latency_logging = True
         self.latency_queue = LifoQueue()
+        self.serve_api = False
         self.stakes = dict()
         self.dirs = {}
         base = os.path.dirname(os.path.realpath(__file__))
@@ -56,38 +150,13 @@ class Trader:
     def set_saving_batch_size(self, saving_batch_size:int) -> None:
         self.saving_batch_size = saving_batch_size
 
+
     def set_latency_logging(self, latency_logging:bool) -> None:
         self.latency_logging = latency_logging
-    
 
-    @staticmethod
-    def ema(x, n):
-        alpha = 2 /(n + 1.0)
-        alpha_rev = 1-alpha
-        n = x.shape[0]
-        pows = alpha_rev**(np.arange(n+1))
-        scale_arr = 1/pows[:-1]
-        offset = x[0]*pows[1:]
-        pw0 = alpha*alpha_rev**(n-1)
-        mult = x*pw0*scale_arr
-        cumsums = mult.cumsum()
-        out = offset + cumsums*scale_arr[::-1]
-        return out
 
-    @staticmethod
-    def ema2(s, n):
-        s = np.array(s)
-        ema = []
-        j = 1
-        sma = sum(s[:n]) / n
-        multiplier = 2 / float(1 + n)
-        ema.append(sma)
-        ema.append(( (s[n] - sma) * multiplier) + sma)
-        for i in s[n+1:]:
-            tmp = ( (i - ema[j]) * multiplier) + ema[j]
-            j = j + 1
-            ema.append(tmp)
-        return ema
+    def set_serve_api(self, serve_api:bool) -> None:
+        self.serve_api = serve_api
 
 
     def populate_signal_queue(self, b:int, e:int, pair: str, signal_queue: Queue, ydata=list(), offset=0) -> None:
@@ -107,43 +176,33 @@ class Trader:
                 latencies.append(int(now - ts))
                 ydata.append([n[0], 0, n[1], n[2], (n[4] + n[5]) / 2, n[6]]) 
                 y = np.array([n[4] for n in ydata])
-                emabase = Trader.ema2(y, b)
-                emaY = Trader.ema2(y, e)
+                emabase = _ewma_infinite_hist(y, b)
+                emaY = _ewma_infinite_hist(y, e)
                 emadiff = emaY - emabase
                 emasigndiff = np.diff(np.sign(emadiff))
                 sell = ((emasigndiff < 0) * 1).astype('float')
                 buy = ((emasigndiff > 0) * 1).astype('float')
                 sell[sell == 0] = np.nan
                 buy[buy == 0] = np.nan
-                # print(y[-3:], buy[-3:], sell[-3:])
                 self.log.append(f'[{pair}]+{latencies[-1]}ms || {y[-1]} {emadiff[-1]}')
-                # print(f'[{pair}]+{latencies[-1]}ms ||',y[-1], emadiff[-1])
                 self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
                 if buy[-1] >= .9:
                     self.signals.append([ts, 'BUY', pair, y[-1]])
-                    # open(self.signals_path, 'a').write(json.dumps([ts, 'BUY', pair, y[-1]]) + "\n")
                     signal_queue.put([ts, 'BUY', pair, y[-1]])
                 if sell[-1] >= .9: 
                     self.signals.append([ts, 'SELL', pair, y[-1]])
-                    # open(self.signals_path, 'a').write(json.dumps([ts, 'SELL', pair, y[-1]]) + "\n")
                     signal_queue.put([ts, 'SELL', pair, y[-1]])
 
 
     def do_buy(self, timestamp: int, pair: str, price: int) -> None: 
         msg = f'{pair} buy at {price}'
         self.past_trades.append(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
-        # past_trades_path = os.path.join('past_trades', f'trades-{self.ssid}.txt')
-        # open(past_trades_path, 'a').write(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
         self.stakes[pair] = price
 
 
     def do_sell(self, timestamp: int, pair: str, price: int, profit: int) -> None: 
         msg = f'{pair} sell at {price}'
-        # past_trades_path = os.path.join('past_trades', f'trades-{self.ssid}.txt')
         self.past_trades.append(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
-        # open(past_trades_path, 'a').write(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
-        # profits_path = os.path.join('past_trades', f'profits-{self.ssid}.txt')
-        # open(profits_path, 'a').write(f'{pair} {profit}\n')
 
     
     def do_buy_live(self) -> None:
@@ -218,7 +277,7 @@ class Trader:
         return [x for x in list(self.ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
 
 
-    def get_ohlc(self, pair, limit=10, try_local=True, ohlc_dir='ohlc_json') -> list: 
+    def get_ohlc(self, pair, limit=50, try_local=True, ohlc_dir='ohlc_json') -> list: 
         pair_filesafe = pair.replace('/', '-')
         pp = os.path.join(ohlc_dir, f'{pair_filesafe}.json')
         if try_local: 
@@ -232,8 +291,59 @@ class Trader:
         t = int(time.time() * 1000) - self.ssid
         return self.profit / t
 
+    def api(self): 
+        from flask import Flask, send_from_directory, jsonify
+        app = Flask(__name__)
+        import logging
+        llg = logging.getLogger('werkzeug')
+        llg.disabled = True
+        
+        @app.route("/js/update.js")
+        def javascript():
+            return send_from_directory('.', 'update.js')
+        @app.route("/")
+        def hello_world():
+            return """
+            <h2>
+            <a href="/pps">pps</a><br><br>
+            <a href="/log">log</a><br><br>
+            <a href="/trades">trades</a><br><br>
+            <a href="/profit">profit</a><br><br>
+            <a href="/signals">signals</a><br><br>
+            </h2>"""
+        @app.route("/pps")
+        def pps():
+            r = jsonify(self.get_profit_per_second())
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
+        @app.route("/log")
+        def log():
+            r = jsonify(self.log)
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
+        @app.route("/trades")
+        def trades():
+            r = jsonify(self.past_trades)
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
+        @app.route("/profit")
+        def profit():
+            r = jsonify(self.profit)
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
+        @app.route("/signals")
+        def signals():
+            r = jsonify(self.signals)
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
+        app.run(host='0.0.0.0', port=3333)
+
+
     def __call__(self) -> None:
         print(self.__dict__)
+        serverThread = Thread(target=self.api)
+        serverThread.daemon = True
+        serverThread.start()
         signal_queue = Queue()
         pairs = self.get_pairs()
         threads = list()
@@ -264,65 +374,13 @@ class Trader:
             th.join()
         t3.join()
         t4.join()
-
-
-
-def server(trader: Trader): 
-    from flask import Flask, send_from_directory, jsonify
-    app = Flask(__name__)
-    import logging
-    llg = logging.getLogger('werkzeug')
-    llg.disabled = True
-    
-    @app.route("/js/update.js")
-    def javascript():
-        return send_from_directory('.', 'update.js')
-    @app.route("/")
-    def hello_world():
-        return """
-        <h2>
-        <a href="/pps">pps</a><br><br>
-        <a href="/log">log</a><br><br>
-        <a href="/trades">trades</a><br><br>
-        <a href="/profit">profit</a><br><br>
-        <a href="/signals">signals</a><br><br>
-        </h2>"""
-    @app.route("/pps")
-    def pps():
-        r = jsonify(trader.get_profit_per_second())
-        r.headers.add('Access-Control-Allow-Origin', '*')
-        return r
-    @app.route("/log")
-    def log():
-        r = jsonify(trader.log)
-        r.headers.add('Access-Control-Allow-Origin', '*')
-        return r
-    @app.route("/trades")
-    def trades():
-        r = jsonify(trader.past_trades)
-        r.headers.add('Access-Control-Allow-Origin', '*')
-        return r
-    @app.route("/profit")
-    def profit():
-        r = jsonify(trader.profit)
-        r.headers.add('Access-Control-Allow-Origin', '*')
-        return r
-    @app.route("/signals")
-    def signals():
-        r = jsonify(trader.signals)
-        r.headers.add('Access-Control-Allow-Origin', '*')
-        return r
-    app.run(host='0.0.0.0', port=3333)
-
-
+        serverThread.join()
 
 if __name__ == '__main__': 
     trader = Trader(ccxt.kucoin)
     trader.set_ticker_interval(5.0)
-    trader.set_number_of_pairs(5)
+    trader.set_number_of_pairs(1)
     trader.set_saving_batch_size(64)
     trader.set_latency_logging(False)
-    s = Thread(target=server, args=(trader, ))
-    s.start()
+    trader.set_serve_api(True)
     trader()
-    s.join()
