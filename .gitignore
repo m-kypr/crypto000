@@ -7,3 +7,6 @@ past_trades/*
 test.py
 bot.py
 plot.py
+env/
+data.py
+bot.py

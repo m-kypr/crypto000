@@ -67,7 +67,7 @@ def _ewma_infinite_hist(arr_in, window):
     much faster:
 
         In [1]: import numpy as np, bars
-           ...: arr = np.random.random(100000)
+           ...: arreturn aaa(np.random.random(100000)
            ...: %timeit bars._ewma(arr, 10)
            ...: %timeit bars._ewma_infinite_hist(arr, 10)
         3.74 ms ± 60.2 µs per loop (mean ± std. dev. of 7 runs, 100 loops each)
@@ -103,26 +103,30 @@ def _ewma_infinite_hist(arr_in, window):
 
 
 class Trader: 
-    def __init__(self, exchange) -> None:
-        key = json.loads(open('key.json', 'r').read())
+    def __init__(self, exchange, keyfile:str, timeout=50000, enableRateLimit=True) -> None:
+        key = json.loads(open(keyfile, 'r').read())
         args = {
             'apiKey': key['apiKey'],
             'secret': key['secret'],
             'passphrase': key['passphrase'],
             'password': key['passphrase'],
-            'timeout': 50000,
-            'enableRateLimit': True,
+            'timeout': timeout,
+            'enableRateLimit': enableRateLimit,
         }
+        self.port = 3333
+        self.data = {}
         self.past_trades = []
         self.log = []
         self.signals = []
         self.profit = 0
+        self.calculation_times = []
         self.ssid = int(time.time() * 1000)
         self.ex = exchange(config=args)
         self.ticker_interval = 5
         self.ticker_queues = dict()
         self.number_of_pairs = 1
         self.saving_batch_size = 32
+        self.ohlc_limit = 50
         self.latency_logging = True
         self.latency_queue = LifoQueue()
         self.serve_api = False
@@ -159,6 +163,13 @@ class Trader:
         self.serve_api = serve_api
 
 
+    def set_port(self, port:int) -> None:
+        self.port = port
+
+    def set_ohlc_limit(self, ohlc_limit:int) -> None:
+        self.ohlc_limit = ohlc_limit
+
+
     def populate_signal_queue(self, b:int, e:int, pair: str, signal_queue: Queue, ydata=list(), offset=0) -> None:
         lastts = 0
         if not pair in self.ticker_queues:
@@ -171,6 +182,7 @@ class Trader:
                 ts = n[0]
                 if ts == lastts:
                     continue
+                _starttime = time.time()
                 lastts = ts
                 now = time.time() * 1000
                 latencies.append(int(now - ts))
@@ -179,12 +191,13 @@ class Trader:
                 emabase = _ewma_infinite_hist(y, b)
                 emaY = _ewma_infinite_hist(y, e)
                 emadiff = emaY - emabase
+                self.data[pair] = [y.tolist(), emabase.tolist(), emaY.tolist(), emadiff.tolist()]
                 emasigndiff = np.diff(np.sign(emadiff))
                 sell = ((emasigndiff < 0) * 1).astype('float')
                 buy = ((emasigndiff > 0) * 1).astype('float')
                 sell[sell == 0] = np.nan
                 buy[buy == 0] = np.nan
-                self.log.append(f'[{pair}]+{latencies[-1]}ms || {y[-1]} {emadiff[-1]}')
+                self.log.append(f'[{pair}]{latencies[-1]}ms || {y[-1]} {emadiff[-1]}')
                 self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
                 if buy[-1] >= .9:
                     self.signals.append([ts, 'BUY', pair, y[-1]])
@@ -192,6 +205,7 @@ class Trader:
                 if sell[-1] >= .9: 
                     self.signals.append([ts, 'SELL', pair, y[-1]])
                     signal_queue.put([ts, 'SELL', pair, y[-1]])
+                self.calculation_times.append(time.time() - _starttime)
 
 
     def do_buy(self, timestamp: int, pair: str, price: int) -> None: 
@@ -277,13 +291,13 @@ class Trader:
         return [x for x in list(self.ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
 
 
-    def get_ohlc(self, pair, limit=50, try_local=True, ohlc_dir='ohlc_json') -> list: 
+    def get_ohlc(self, pair, try_local=True, ohlc_dir='ohlc_json') -> list: 
         pair_filesafe = pair.replace('/', '-')
         pp = os.path.join(ohlc_dir, f'{pair_filesafe}.json')
         if try_local: 
             if os.path.isfile(pp):
                 return json.loads(open(pp, 'r').read())
-        ohlc = self.ex.fetchOHLCV(pair, limit=limit)
+        ohlc = self.ex.fetchOHLCV(pair, limit=self.ohlc_limit)
         open(pp, 'w').write(json.dumps(ohlc))
         return ohlc 
 
@@ -297,7 +311,9 @@ class Trader:
         import logging
         llg = logging.getLogger('werkzeug')
         llg.disabled = True
-        
+        def aaa(r):
+            r.headers.add('Access-Control-Allow-Origin', '*')
+            return r
         @app.route("/js/update.js")
         def javascript():
             return send_from_directory('.', 'update.js')
@@ -310,33 +326,31 @@ class Trader:
             <a href="/trades">trades</a><br><br>
             <a href="/profit">profit</a><br><br>
             <a href="/signals">signals</a><br><br>
+            <a href="/calctimes">calctimes</a><br><br>
+            <a href="/data">data</a><br><br>
             </h2>"""
         @app.route("/pps")
         def pps():
-            r = jsonify(self.get_profit_per_second())
-            r.headers.add('Access-Control-Allow-Origin', '*')
-            return r
+            return aaa(jsonify(self.get_profit_per_second()))
         @app.route("/log")
         def log():
-            r = jsonify(self.log)
-            r.headers.add('Access-Control-Allow-Origin', '*')
-            return r
+            return aaa(jsonify(self.log))
         @app.route("/trades")
         def trades():
-            r = jsonify(self.past_trades)
-            r.headers.add('Access-Control-Allow-Origin', '*')
-            return r
+            return aaa(jsonify(self.past_trades))
         @app.route("/profit")
         def profit():
-            r = jsonify(self.profit)
-            r.headers.add('Access-Control-Allow-Origin', '*')
-            return r
+            return aaa(jsonify(self.profit))
         @app.route("/signals")
         def signals():
-            r = jsonify(self.signals)
-            r.headers.add('Access-Control-Allow-Origin', '*')
-            return r
-        app.run(host='0.0.0.0', port=3333)
+            return aaa(jsonify(self.signals))
+        @app.route("/calctimes")
+        def calctimes():
+            return aaa(jsonify(self.calculation_times))
+        @app.route("/data")
+        def data():
+            return aaa(jsonify(self.data))
+        app.run(host='0.0.0.0', port=self.port)
 
 
     def __call__(self) -> None:
@@ -355,7 +369,7 @@ class Trader:
                 threads.append(t1)
             time.sleep(1)
             for pair in pairs[:self.number_of_pairs]:
-                ohlc = self.get_ohlc(pair)
+                ohlc = self.get_ohlc(pair, try_local=False)
                 t2 = Thread(target=self.populate_signal_queue, 
                     args=(10, 45, pair, signal_queue, ohlc, ))
                 t2.daemon = True
@@ -377,10 +391,12 @@ class Trader:
         serverThread.join()
 
 if __name__ == '__main__': 
-    trader = Trader(ccxt.kucoin)
-    trader.set_ticker_interval(5.0)
-    trader.set_number_of_pairs(1)
+    trader = Trader(ccxt.kucoin, 'key.json')
+    trader.set_ticker_interval(60.0)
+    trader.set_number_of_pairs(20)
     trader.set_saving_batch_size(64)
     trader.set_latency_logging(False)
     trader.set_serve_api(True)
+    trader.set_port(3333)
+    trader.set_ohlc_limit(100)
     trader()
