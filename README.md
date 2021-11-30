@@ -1,4 +1,4 @@
-## crypto000 - A crypto trading bot
+## crypto000 - An efficent crypto trading bot with positive ROI
 
 ### Some Stats
 
