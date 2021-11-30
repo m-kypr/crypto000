@@ -15,7 +15,7 @@ from numba import int64
 
 
 @jit((float64[:], int64), nopython=True, nogil=True)
-def _ewma(arr_in, window):
+def _ewma(arr_in: np.ndarray, window: int) -> np.ndarray:
     r"""Exponentialy weighted moving average specified by a decay ``window``
     to provide better adjustments for small windows via:
 
@@ -56,7 +56,7 @@ def _ewma(arr_in, window):
 
 
 @jit((float64[:], int64), nopython=True, nogil=True)
-def _ewma_infinite_hist(arr_in, window):
+def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray: 
     r"""Exponentialy weighted moving average specified by a decay ``window``
     assuming infinite history via the recursive form:
 
@@ -105,7 +105,27 @@ def _ewma_infinite_hist(arr_in, window):
 class Trader:         
     configurable_keys = ['port', 'ex', 'ticker_interval', 'number_of_pairs', 'saving_batch_size', 'ohlc_limit', 'latency_logging', 'serve_api']
 
+
     def __init__(self, exchange, keyfile:str, config_file='', timeout=50000, enableRateLimit=True) -> None:
+        self.ssid = int(time.time() * 1000)
+        self.port = 3333
+        self.serve_api = False
+        self.ticker_interval = 5
+        self.number_of_pairs = 1
+        self.saving_batch_size = 32
+        self.ohlc_limit = 50
+        self.latency_logging = True
+        self.ex = exchange
+
+        if config_file: 
+            config = json.loads(open(config_file, 'r').read())
+            for key in Trader.configurable_keys:
+                if key in config:
+                    v = config[key]
+                    if key == 'ex': 
+                        v = getattr(ccxt, v)
+                    setattr(self, key, v)
+
         key = json.loads(open(keyfile, 'r').read())
         args = {
             'apiKey': key['apiKey'],
@@ -115,44 +135,32 @@ class Trader:
             'timeout': timeout,
             'enableRateLimit': enableRateLimit,
         }
-        self.port = 3333
-        self.data = {}
+        self.ex = self.ex(config=args)
+
+        self.profit = 0
+        self.roi = 0
         self.past_trades = []
         self.log = []
         self.signals = []
-        self.profit = 0
         self.calculation_times = []
-        self.ssid = int(time.time() * 1000)
-        self.ex = exchange(config=args)
-        self.ticker_interval = 5
-        self.ticker_queues = dict()
-        self.number_of_pairs = 1
-        self.saving_batch_size = 32
-        self.ohlc_limit = 50
-        self.latency_logging = True
-        self.latency_queue = LifoQueue()
-        self.serve_api = False
-        self.stakes = dict()
+        self.latencies = []
+        self.ticker_queues = {}
+        self.data = {}
+        self.stakes = {}
+
+        if self.latency_logging:
+            self.latency_queue = LifoQueue()
+
         self.dirs = {}
         base = os.path.dirname(os.path.realpath(__file__))
         self.dirs['log'] = os.path.join(base, 'log')
+        self.dirs['ohlc'] = os.path.join(base, 'ohlc_json')
         for v in self.dirs.values():
             if not os.path.isdir(v):
                 os.mkdir(v)
         self.dirs['base'] = base
-        self.signals_path = os.path.join(self.dirs['log'], f'signals-{self.ssid}.txt')
-        if not os.path.isfile(self.signals_path):
-            open(self.signals_path, 'w').write("")
-        if config_file: 
-            config = json.loads(open(config_file, 'r').read())
-            for key in Trader.configurable_keys:
-                if key in config:
-                    v = config[key]
-                    if key == 'ex': 
-                        v = getattr(ccxt, v)
-                    setattr(self, key, v)            
-        
 
+        
     def set_ticker_interval(self, interval:float) -> None:
         self.ticker_interval = interval
 
@@ -209,7 +217,9 @@ class Trader:
                 sell[sell == 0] = np.nan
                 buy[buy == 0] = np.nan
                 self.log.append(f'[{pair}]{latencies[-1]}ms || {y[-1]} {emadiff[-1]}')
-                self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
+                self.latencies.append([ts, int(sum(latencies)/len(latencies))])
+                if self.latency_logging: 
+                    self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
                 if buy[-1] >= .9:
                     self.signals.append([ts, 'BUY', pair, y[-1]])
                     signal_queue.put([ts, 'BUY', pair, y[-1]])
@@ -238,14 +248,12 @@ class Trader:
 
 
     def execute_trades_on_queue(self, q:Queue, stake=0, profit=0) -> None:
-        self.profit = 0
-        self.roi = 0
         while True: 
             if not q.empty():
                 sgnl = q.get()
                 now = time.time() * 1000
                 sgnl_age = now - sgnl[0]
-                print(f'[{sgnl[2]}]', sgnl[1], 'signal is', int(sgnl_age), 'ms in the past')
+                # print(f'[{sgnl[2]}]', sgnl[1], 'signal is', int(sgnl_age), 'ms in the past')
                 if sgnl_age < 5000:
                     if sgnl[2] not in self.stakes:
                         self.stakes[sgnl[2]] = 0
@@ -300,14 +308,13 @@ class Trader:
                     X, Y = [], []
         
 
-
     def get_pairs(self, curr='usdt') -> list:
         return [x for x in list(self.ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
 
 
-    def get_ohlc(self, pair, try_local=True, ohlc_dir='ohlc_json') -> list: 
+    def get_ohlc(self, pair, try_local=True) -> list: 
         pair_filesafe = pair.replace('/', '-')
-        pp = os.path.join(ohlc_dir, f'{pair_filesafe}.json')
+        pp = os.path.join(self.dirs['ohlc'], f'{pair_filesafe}.json')
         if try_local: 
             if os.path.isfile(pp):
                 return json.loads(open(pp, 'r').read())
@@ -315,16 +322,18 @@ class Trader:
         open(pp, 'w').write(json.dumps(ohlc))
         return ohlc 
 
+
     def get_profit_per_second(self) -> int:
         t = int(time.time() * 1000) - self.ssid
         return self.profit / t
 
+
     def api(self): 
-        from flask import Flask, send_from_directory, jsonify
+        from flask import Flask, jsonify
         app = Flask(__name__)
         import logging
-        llg = logging.getLogger('werkzeug')
-        llg.disabled = True
+        logging.getLogger('werkzeug').disabled = True
+        os.environ['WERKZEUG_RUN_MAIN'] = 'true'
         def aaa(r):
             r.headers.add('Access-Control-Allow-Origin', '*')
             return r
@@ -340,6 +349,7 @@ class Trader:
             <a href="/calctimes">calctimes</a><br><br>
             <a href="/data">data</a><br><br>
             <a href="/roi">roi</a><br><br>
+            <a href="/latencies">latencies</a><br><br>
             </h1>"""
         @app.route("/pps")
         def pps():
@@ -359,12 +369,16 @@ class Trader:
         @app.route("/calctimes")
         def calctimes():
             return aaa(jsonify(self.calculation_times))
+        @app.route("/latencies")
+        def latencies():
+            return aaa(jsonify(self.latencies))
         @app.route("/data")
         def data():
             return aaa(jsonify(self.data))
         @app.route("/roi")
         def roi():
             return aaa(jsonify(self.roi))
+        print(f'Serving API on http://127.0.0.1:{self.port}')
         app.run(host='0.0.0.0', port=self.port)
 
 
@@ -416,6 +430,7 @@ class Trader:
         t4.join()
         if self.serve_api:
             serverThread.join()
+
 
 if __name__ == '__main__': 
     trader = Trader(ccxt.kucoin, 'key.json', 'config.json')
