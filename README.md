@@ -8,25 +8,25 @@
 
 ### Requirements 
 
-ccxt 
-numpy
-Flask
-numba
+Python 3 & See requirements.txt
 
 
 ### How to use
 
+- copy default_key.json to key.json and paste your Api keys
 
-- `python crypto000.py`
+- copy default_config.json to config.json 
 
-- Flask will be running in the background, serving a small API
+- `pip install -r requirements.txt`
+
+- `python3 crypto000.py`
 
 
 ### How it works & Motivation
 
-
 - Calculate two exponential moving averages and if they cross it is either time to sell or buy depending on how the lines crossed 
 - This is all done in threads with Queues, theoretically if there were no rate limits by the exchange APIs, you could trade on nearly infinity many markets
+- Flask will be running in the background, serving a small API (default port is 3333)
 
 
 The creator of this script knows that this provides absolutely 0 value to anyone besides the user, I have started and abandoned similar projects multiple times 

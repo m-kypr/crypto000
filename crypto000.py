@@ -6,7 +6,7 @@ import json
 import time
 import os
 
-import ccxt.kucoin
+import ccxt
 import numpy as np
 
 from numba import jit
@@ -102,8 +102,10 @@ def _ewma_infinite_hist(arr_in, window):
     return ewma
 
 
-class Trader: 
-    def __init__(self, exchange, keyfile:str, timeout=50000, enableRateLimit=True) -> None:
+class Trader:         
+    configurable_keys = ['port', 'ex', 'ticker_interval', 'number_of_pairs', 'saving_batch_size', 'ohlc_limit', 'latency_logging', 'serve_api']
+
+    def __init__(self, exchange, keyfile:str, config_file='', timeout=50000, enableRateLimit=True) -> None:
         key = json.loads(open(keyfile, 'r').read())
         args = {
             'apiKey': key['apiKey'],
@@ -141,6 +143,14 @@ class Trader:
         self.signals_path = os.path.join(self.dirs['log'], f'signals-{self.ssid}.txt')
         if not os.path.isfile(self.signals_path):
             open(self.signals_path, 'w').write("")
+        if config_file: 
+            config = json.loads(open(config_file, 'r').read())
+            for key in Trader.configurable_keys:
+                if key in config:
+                    v = config[key]
+                    if key == 'ex': 
+                        v = getattr(ccxt, v)
+                    setattr(self, key, v)            
         
 
     def set_ticker_interval(self, interval:float) -> None:
@@ -165,6 +175,7 @@ class Trader:
 
     def set_port(self, port:int) -> None:
         self.port = port
+
 
     def set_ohlc_limit(self, ohlc_limit:int) -> None:
         self.ohlc_limit = ohlc_limit
@@ -211,11 +222,10 @@ class Trader:
     def do_buy(self, timestamp: int, pair: str, price: int) -> None: 
         msg = f'{pair} buy at {price}'
         self.past_trades.append(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
-        self.stakes[pair] = price
 
 
-    def do_sell(self, timestamp: int, pair: str, price: int, profit: int) -> None: 
-        msg = f'{pair} sell at {price}'
+    def do_sell(self, timestamp: int, pair: str, price: int, profit: int, roi: int) -> None: 
+        msg = f'{pair} sell at {price} ({roi})'
         self.past_trades.append(f'[{datetime.datetime.fromtimestamp(timestamp / 1000)}] {msg}\n')
 
     
@@ -229,6 +239,7 @@ class Trader:
 
     def execute_trades_on_queue(self, q:Queue, stake=0, profit=0) -> None:
         self.profit = 0
+        self.roi = 0
         while True: 
             if not q.empty():
                 sgnl = q.get()
@@ -241,13 +252,16 @@ class Trader:
                     stake = self.stakes[sgnl[2]]
                     if sgnl[1] == 'BUY':
                         if stake == 0:
-                            self.do_buy(sgnl[0], sgnl[2], sgnl[3])
+                            self.do_buy(sgnl[0], sgnl[2], sgnl[3])        
+                            self.stakes[sgnl[2]] = sgnl[3]
                     if sgnl[1] == 'SELL':
                         if stake > 0: 
                             pp = sgnl[3] - stake
                             if pp > 0: 
+                                roi = pp / stake
+                                self.roi += roi
                                 self.stakes[sgnl[2]] = 0
-                                self.do_sell(sgnl[0], sgnl[2], sgnl[3], pp)
+                                self.do_sell(sgnl[0], sgnl[2], sgnl[3], pp, roi)
                                 self.profit += pp
                             else:
                                 print('no sell because profit negative!!!')
@@ -314,13 +328,10 @@ class Trader:
         def aaa(r):
             r.headers.add('Access-Control-Allow-Origin', '*')
             return r
-        @app.route("/js/update.js")
-        def javascript():
-            return send_from_directory('.', 'update.js')
         @app.route("/")
         def hello_world():
             return """
-            <h2>
+            <h1>
             <a href="/pps">pps</a><br><br>
             <a href="/log">log</a><br><br>
             <a href="/trades">trades</a><br><br>
@@ -328,7 +339,8 @@ class Trader:
             <a href="/signals">signals</a><br><br>
             <a href="/calctimes">calctimes</a><br><br>
             <a href="/data">data</a><br><br>
-            </h2>"""
+            <a href="/roi">roi</a><br><br>
+            </h1>"""
         @app.route("/pps")
         def pps():
             return aaa(jsonify(self.get_profit_per_second()))
@@ -350,7 +362,20 @@ class Trader:
         @app.route("/data")
         def data():
             return aaa(jsonify(self.data))
+        @app.route("/roi")
+        def roi():
+            return aaa(jsonify(self.roi))
         app.run(host='0.0.0.0', port=self.port)
+
+
+    def export_config(self, file_path: str) -> None: 
+        save_dict = {}
+        for key in Trader.configurable_keys:
+            v = self.__dict__[key]
+            if isinstance(v, ccxt.Exchange):
+                v = v.__class__.__name__
+            save_dict[key] = v
+        open(file_path, 'w').write(json.dumps(save_dict, indent=4, sort_keys=True))
 
 
     def __call__(self) -> None:
@@ -393,12 +418,14 @@ class Trader:
             serverThread.join()
 
 if __name__ == '__main__': 
-    trader = Trader(ccxt.kucoin, 'key.json')
-    trader.set_ticker_interval(60.0)
-    trader.set_number_of_pairs(20)
-    trader.set_saving_batch_size(64)
-    trader.set_latency_logging(False)
-    trader.set_serve_api(True)
-    trader.set_port(3333)
-    trader.set_ohlc_limit(100)
+    trader = Trader(ccxt.kucoin, 'key.json', 'config.json')
     trader()
+    # trader.set_ticker_interval(60.0)
+    # trader.set_number_of_pairs(20)
+    # trader.set_saving_batch_size(64)
+    # trader.set_latency_logging(False)
+    # trader.set_serve_api(True)
+    # trader.set_port(3333)
+    # trader.set_ohlc_limit(100)
+    # trader.export_config('config.json')
+    # trader()
