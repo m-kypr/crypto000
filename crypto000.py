@@ -355,9 +355,10 @@ class Trader:
 
     def __call__(self) -> None:
         print(self.__dict__)
-        serverThread = Thread(target=self.api)
-        serverThread.daemon = True
-        serverThread.start()
+        if self.serve_api: 
+            serverThread = Thread(target=self.api)
+            serverThread.daemon = True
+            serverThread.start()
         signal_queue = Queue()
         pairs = self.get_pairs()
         threads = list()
@@ -388,7 +389,8 @@ class Trader:
             th.join()
         t3.join()
         t4.join()
-        serverThread.join()
+        if self.serve_api:
+            serverThread.join()
 
 if __name__ == '__main__': 
     trader = Trader(ccxt.kucoin, 'key.json')
