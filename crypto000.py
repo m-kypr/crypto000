@@ -1,4 +1,5 @@
-from queue import Queue, LifoQueue
+from queue import LifoQueue
+from queue import Queue as FifoQueue
 from threading import Thread
 
 import datetime
@@ -7,6 +8,7 @@ import time
 import os
 
 import ccxt
+from numba.cuda import test
 import numpy as np
 
 from numba import jit
@@ -110,6 +112,7 @@ class Trader:
         self.ssid = int(time.time() * 1000)
         self.port = 3333
         self.serve_api = False
+        self.test_on_historical = False
         self.ticker_interval = 5
         self.number_of_pairs = 1
         self.saving_batch_size = 32
@@ -137,6 +140,7 @@ class Trader:
         }
         self.ex = self.ex(config=args)
 
+        self.strategy_fails = 0
         self.profit = 0
         self.roi = 0
         self.past_trades = []
@@ -144,9 +148,10 @@ class Trader:
         self.signals = []
         self.calculation_times = []
         self.latencies = []
+        # self.data_queues = {}
         self.ticker_queues = {}
-        self.data = {}
         self.stakes = {}
+        self.data = {}
 
         if self.latency_logging:
             self.latency_queue = LifoQueue()
@@ -181,6 +186,10 @@ class Trader:
         self.serve_api = serve_api
 
 
+    def set_test_on_historical(self, test_on_historical:bool) -> None:
+        self.test_on_historical = test_on_historical
+
+
     def set_port(self, port:int) -> None:
         self.port = port
 
@@ -189,12 +198,22 @@ class Trader:
         self.ohlc_limit = ohlc_limit
 
 
-    def populate_signal_queue(self, b:int, e:int, pair: str, signal_queue: Queue, ydata=list(), offset=0) -> None:
-        lastts = 0
+    def populate_signal_queue(self, b:int, e:int, pair: str, signal_queue: FifoQueue, ydata: list, offset=0) -> None:
         if not pair in self.ticker_queues:
             raise Exception(f'No ticker queue for pair {pair}') 
-        q = self.ticker_queues[pair]
         latencies = list()
+        q = self.ticker_queues[pair]
+        lastts = ydata[offset][0]
+        test_values = True
+        if test_values:
+            _emaYe = {}
+            emaYe = {}
+            emadiffe = {}
+            for e in range(b, 99): 
+                emaYe[e] = [ydata[offset][4]]
+        else:
+            emabase = [ydata[offset][4]]
+            emaY = [ydata[offset][4]]
         while True:
             if not q.empty():
                 n = q.get()
@@ -203,15 +222,47 @@ class Trader:
                     continue
                 _starttime = time.time()
                 lastts = ts
-                now = time.time() * 1000
+                now = int(time.time() * 1000)
                 latencies.append(int(now - ts))
                 ydata.append([n[0], 0, n[1], n[2], (n[4] + n[5]) / 2, n[6]]) 
                 y = np.array([n[4] for n in ydata])
-                emabase = _ewma_infinite_hist(y, b)
-                emaY = _ewma_infinite_hist(y, e)
-                emadiff = emaY - emabase
-                self.data[pair] = [y.tolist(), emabase.tolist(), emaY.tolist(), emadiff.tolist()]
-                emasigndiff = np.diff(np.sign(emadiff))
+                _emabase = _ewma_infinite_hist(y[-100:], b)
+                if len(emabase) > 100:
+                    emabase = np.concatenate([emabase[:-49], _emabase[50:]])
+                else:
+                    emabase = np.concatenate([emabase, _emabase])
+                if test_values:
+                    for e in range(b, 99):
+                        _emaYe[e] = _ewma(y[-100:], e)
+                        if len(emaYe[e]) > 100:
+                            emaYe[e] = np.concatenate([emaYe[e][:-49], _emaYe[e][50:]])
+                        else:
+                            emaYe[e] = np.concatenate([emaYe[e], _emaYe[e]])
+                        emadiffe[e] = emaYe[e] - emabase
+                        emasigndiff = np.diff(np.sign(emadiffe[e]))
+                        sell = ((emasigndiff < 0) * 1).astype('float')
+                        buy = ((emasigndiff > 0) * 1).astype('float')
+                        sell[sell == 0] = np.nan
+                        buy[buy == 0] = np.nan
+                        # self.log.append(f'[{pair}]{latencies[-1]}ms || {y[-1]} {emadiff[-1]}')
+                        # self.latencies.append([ts, int(sum(latencies)/len(latencies))])
+                        # if self.latency_logging: 
+                        #     self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
+                        if buy[-1] >= .9:
+                            # self.signals.append([ts, 'BUY', pair, y[-1]])
+                            signal_queue.put([ts, 'BUY', pair, y[-1], e])
+                        if sell[-1] >= .9: 
+                            # self.signals.append([ts, 'SELL', pair, y[-1]])
+                            signal_queue.put([ts, 'SELL', pair, y[-1], e])        
+                else:
+                    _emaY = _ewma_infinite_hist(y[-100:], e)
+                    if len(emaY) > 100:
+                        emaY = np.concatenate([emaY[:-49], _emaY[50:]])
+                    else:
+                        emaY = np.concatenate([emaY, _emaY])
+                    emadiff = emaY - emabase
+                    self.data[pair] = [y.tolist(), emabase.tolist(), emaY.tolist(), emadiff.tolist()]
+                    emasigndiff = np.diff(np.sign(emadiff))
                 sell = ((emasigndiff < 0) * 1).astype('float')
                 buy = ((emasigndiff > 0) * 1).astype('float')
                 sell[sell == 0] = np.nan
@@ -222,10 +273,10 @@ class Trader:
                     self.latency_queue.put([ts, int(sum(latencies)/len(latencies))])
                 if buy[-1] >= .9:
                     self.signals.append([ts, 'BUY', pair, y[-1]])
-                    signal_queue.put([ts, 'BUY', pair, y[-1]])
+                    signal_queue.put([ts, 'BUY', pair, y[-1], e])
                 if sell[-1] >= .9: 
                     self.signals.append([ts, 'SELL', pair, y[-1]])
-                    signal_queue.put([ts, 'SELL', pair, y[-1]])
+                    signal_queue.put([ts, 'SELL', pair, y[-1], e])
                 self.calculation_times.append(time.time() - _starttime)
 
 
@@ -247,37 +298,69 @@ class Trader:
         pass
 
 
-    def execute_trades_on_queue(self, q:Queue, stake=0, profit=0) -> None:
+    def execute_trades_on_queue(self, q:FifoQueue, stake=0, profit=0) -> None:
+        stakes = {}
+        roi = {}
+        budget = 10
         while True: 
             if not q.empty():
                 sgnl = q.get()
                 now = time.time() * 1000
-                sgnl_age = now - sgnl[0]
-                # print(f'[{sgnl[2]}]', sgnl[1], 'signal is', int(sgnl_age), 'ms in the past')
-                if sgnl_age < 5000:
-                    if sgnl[2] not in self.stakes:
-                        self.stakes[sgnl[2]] = 0
-                    stake = self.stakes[sgnl[2]]
-                    if sgnl[1] == 'BUY':
+                if self.test_on_historical:
+                    t = sgnl[1]
+                    pair = sgnl[2]
+                    price = sgnl[3]
+                    e = sgnl[4]
+                    if pair not in stakes: 
+                        stakes[pair] = {}
+                    if e not in stakes[pair]:
+                        stakes[pair][e] = 0
+                    stake = stakes[pair][e]
+                    if t == 'BUY':
                         if stake == 0:
-                            self.do_buy(sgnl[0], sgnl[2], sgnl[3])        
-                            self.stakes[sgnl[2]] = sgnl[3]
-                    if sgnl[1] == 'SELL':
+                            stakes[pair][e] = price
+                    if t == 'SELL':
                         if stake > 0: 
-                            pp = sgnl[3] - stake
+                            pp = price - stake
                             if pp > 0: 
                                 roi = pp / stake
-                                self.roi += roi
-                                self.stakes[sgnl[2]] = 0
-                                self.do_sell(sgnl[0], sgnl[2], sgnl[3], pp, roi)
-                                self.profit += pp
+                                stakes[pair][e] = 0
+                                if pair not in roi: 
+                                    roi[pair] = {e: roi}
+                                if e not in roi[pair]: 
+                                    roi[pair][e] = roi
+                                else: 
+                                    roi[pair][e] = (roi[pair][e] + roi) / 2
                             else:
-                                print('no sell because profit negative!!!')
+                                self.strategy_fails += 1
+                else:     
+                    sgnl_age = now - sgnl[0]
+                    # print(f'[{sgnl[2]}]', sgnl[1], 'signal is', int(sgnl_age), 'ms in the past')
+                    if sgnl_age < 5000:
+                        if sgnl[2] not in self.stakes:
+                            self.stakes[sgnl[2]] = 0
+                        stake = self.stakes[sgnl[2]]
+                        if sgnl[1] == 'BUY':
+                            if stake == 0:
+                                self.do_buy(sgnl[0], sgnl[2], sgnl[3])        
+                                self.stakes[sgnl[2]] = sgnl[3]
+                        if sgnl[1] == 'SELL':
+                            if stake > 0: 
+                                pp = sgnl[3] - stake
+                                if pp > 0: 
+                                    roi = pp / stake
+                                    self.roi += roi
+                                    self.stakes[sgnl[2]] = 0
+                                    self.do_sell(sgnl[0], sgnl[2], sgnl[3], pp, roi)
+                                    self.profit += pp
+                                else:
+                                    self.strategy_fails += 1
+                                    # print('no sell because profit negative!!!')
 
 
     def populate_ticker_queue(self, pair: str) -> None:
         if not pair in self.ticker_queues: 
-            self.ticker_queues[pair] = Queue()
+            self.ticker_queues[pair] = FifoQueue()
         q = self.ticker_queues[pair]
         while True:
             # o = self.ex.fetch_order_book(pair)
@@ -286,6 +369,21 @@ class Trader:
             n = [tk['time'], float(tk['high']), float(tk['low']), float(tk['averagePrice']), float(tk['buy']), float(tk['sell']), float(tk['vol']), float(tk['takerFeeRate']), float(tk['makerFeeRate'])]
             q.put(n)
             time.sleep(self.ticker_interval)
+
+
+    def populate_ticker_queue_with_old_data(self, pair: str) -> None: 
+        if not pair in self.ticker_queues: 
+            self.ticker_queues[pair] = FifoQueue()
+        q = self.ticker_queues[pair] 
+        ohlcs = self.get_ohlc(pair, try_local=True, ohlc_limit_overwrite=1500)
+        print(ohlcs[0][0], ohlcs[-1][0])
+        self.start_of_ohlc = min(ohlcs[0][0], ohlcs[-1][0])
+        for ohlc in ohlcs[100:]:
+            v = ohlc[5]
+            ohlc[5] = ohlc[4]
+            ohlc.append(v)
+            q.put(ohlc)
+            time.sleep(0.0)
 
 
     def latency_bookkeeper(self) -> None: 
@@ -312,20 +410,22 @@ class Trader:
         return [x for x in list(self.ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
 
 
-    def get_ohlc(self, pair, try_local=True) -> list: 
+    def get_ohlc(self, pair, try_local=True, ohlc_limit_overwrite=None) -> list: 
         pair_filesafe = pair.replace('/', '-')
         pp = os.path.join(self.dirs['ohlc'], f'{pair_filesafe}.json')
         if try_local: 
             if os.path.isfile(pp):
                 return json.loads(open(pp, 'r').read())
-        ohlc = self.ex.fetchOHLCV(pair, limit=self.ohlc_limit)
+        ohlc_limit = ohlc_limit_overwrite
+        if not ohlc_limit: 
+            ohlc_limit = self.ohlc_limit
+        ohlc = self.ex.fetchOHLCV(pair, limit=ohlc_limit)
         open(pp, 'w').write(json.dumps(ohlc))
         return ohlc 
 
 
-    def get_profit_per_second(self) -> int:
-        t = int(time.time() * 1000) - self.ssid
-        return self.profit / t
+    def get_start_of_ohlc(self) -> int:
+        return self.start_of_ohlc
 
 
     def api(self): 
@@ -350,10 +450,11 @@ class Trader:
             <a href="/data">data</a><br><br>
             <a href="/roi">roi</a><br><br>
             <a href="/latencies">latencies</a><br><br>
+            <a href="/stratfails">stategy fails</a><br><br>
             </h1>"""
         @app.route("/pps")
         def pps():
-            return aaa(jsonify(self.get_profit_per_second()))
+            return aaa(jsonify({'ssid': self.ssid, 'start': self.get_start_of_ohlc()}))
         @app.route("/log")
         def log():
             return aaa(jsonify(self.log))
@@ -371,6 +472,8 @@ class Trader:
             return aaa(jsonify(self.calculation_times))
         @app.route("/latencies")
         def latencies():
+            if self.test_on_historical:
+                return aaa(jsonify([]))
             return aaa(jsonify(self.latencies))
         @app.route("/data")
         def data():
@@ -378,6 +481,9 @@ class Trader:
         @app.route("/roi")
         def roi():
             return aaa(jsonify(self.roi))
+        @app.route("/stratfails")
+        def stratfails():
+            return aaa(jsonify(self.strategy_fails))
         print(f'Serving API on http://127.0.0.1:{self.port}')
         app.run(host='0.0.0.0', port=self.port)
 
@@ -398,18 +504,24 @@ class Trader:
             serverThread = Thread(target=self.api)
             serverThread.daemon = True
             serverThread.start()
-        signal_queue = Queue()
+        signal_queue = FifoQueue()
         pairs = self.get_pairs()
         threads = list()
         try:
             for pair in pairs[:self.number_of_pairs]: 
-                t1 = Thread(target=self.populate_ticker_queue, args=(pair, ))
+                target = self.populate_ticker_queue
+                if self.test_on_historical:
+                    target = self.populate_ticker_queue_with_old_data
+                t1 = Thread(target=target, args=(pair, ))
                 t1.daemon = True
                 t1.start()
                 threads.append(t1)
             time.sleep(1)
             for pair in pairs[:self.number_of_pairs]:
-                ohlc = self.get_ohlc(pair, try_local=False)
+                if self.test_on_historical:
+                    ohlc = self.get_ohlc(pair, try_local=True, ohlc_limit_overwrite=1500)[:100]
+                else: 
+                    ohlc = self.get_ohlc(pair, try_local=False)
                 t2 = Thread(target=self.populate_signal_queue, 
                     args=(10, 45, pair, signal_queue, ohlc, ))
                 t2.daemon = True
@@ -434,6 +546,7 @@ class Trader:
 
 if __name__ == '__main__': 
     trader = Trader(ccxt.kucoin, 'key.json', 'config.json')
+    trader.set_test_on_historical(True)
     trader()
     # trader.set_ticker_interval(60.0)
     # trader.set_number_of_pairs(20)
