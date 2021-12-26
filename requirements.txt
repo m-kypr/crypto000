@@ -1,4 +1,4 @@
-ccxt 
-numpy
-Flask
+ccxt==1.64.70
 numba
+numpy
+pymongo

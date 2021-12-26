@@ -4,6 +4,7 @@ from numba import jit
 from numba import float64
 from numba import int64
 
+from ccxt import Exchange
 
 @jit((float64[:], int64), nopython=True, nogil=True)
 def _ewma(arr_in: np.ndarray, window: int) -> np.ndarray:
@@ -91,4 +92,8 @@ def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray:
     for i in range(1, n):
         ewma[i] = arr_in[i] * alpha + ewma[i-1] * (1 - alpha)
     return ewma
+
+
+def get_pairs(ex: Exchange, curr='usdt') -> list:
+    return [x for x in list(ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
 

@@ -11,3 +11,6 @@ env/
 data.py
 config.json
 data.json
+.vscode/
+cyp/
+old.py
