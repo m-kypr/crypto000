@@ -5,8 +5,9 @@ function updateLog() {
     xhr.onreadystatechange = function () {
         if (this.readyState == 4 && this.status == 200) {
             var text = JSON.parse(xhr.responseText);
-            // console.log(text);
+            console.log(text);
             var newText = text.join("<br>");
+            document.getElementById('logDiv').innerHTML = newText;
             logElem.innerHtml = newText;
         }
     };
@@ -16,7 +17,7 @@ function updateLog() {
 function rend() {
     logElem = document.createElement('div');
     logInterval = setInterval(updateLog, 1000);
-    // window.appendChild(logElem)
+    logElem.id = "logDiv";
     document.body.appendChild(logElem);
 }
 document.addEventListener('resize', rend);

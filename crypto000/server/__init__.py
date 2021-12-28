@@ -3,6 +3,7 @@ import os
 
 
 DBASE = os.path.dirname(os.path.realpath(__file__))
+MAX_LOG_LEN = 1500
 
 
 def server(host, port, log_q, verbose=False):
@@ -27,6 +28,8 @@ def server(host, port, log_q, verbose=False):
         log = logs['1']
         while not log_q.empty():
             log.append(log_q.get())
+        if len(log) > MAX_LOG_LEN:
+            log = log[:MAX_LOG_LEN]
         logs['1'] = log
         return jsonify(list(reversed([str(x) for x in log])))
 
