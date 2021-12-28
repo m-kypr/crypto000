@@ -16,8 +16,11 @@ DBASE = os.path.dirname(os.path.realpath(__file__))
 
 
 class Crypto000:
-    def __init__(self, key='key.json', verbose=False) -> None:
-        self.DCYP = os.path.join(DBASE, 'cyp')
+    def __init__(self, datadir='data', key='key.json', verbose=False) -> None:
+        if not datadir.startswith('/'):
+            self.DCYP = os.path.join(DBASE, datadir)
+        else:
+            self.DCYP = datadir
         for d in [x for x in dir(self) if x.startswith('D')]:
             dirname = getattr(self, d)
             if not os.path.isdir(dirname):
@@ -519,10 +522,12 @@ if __name__ == '__main__':
                         help='Enable verbose output', action='store_true')
     parser.add_argument('-k', '--keyfile', help='Key.json file',
                         type=str, default='key.json')
+    parser.add_argument('-d', '--datadir', help='Data directory',
+                        type=str, default='data')
 
     args = parser.parse_args()
 
-    c = Crypto000(key=args.keyfile, verbose=args.verbose)
+    c = Crypto000(datadir=args.datadir, key=args.keyfile, verbose=args.verbose)
 
     try:
         c.tests()
