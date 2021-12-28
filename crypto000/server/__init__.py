@@ -13,7 +13,7 @@ def server(host, port, log_q):
         js_dir = os.path.join(DBASE, 'js')
         for fn in os.listdir(js_dir):
             if fn == text:
-                return send_from_directory(os.path.join(js_dir, text))
+                return send_from_directory(js_dir, text)
 
     @app.route("/")
     def hello_world():
