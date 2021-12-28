@@ -506,11 +506,11 @@ class Crypto000:
 
     def tests(self, timeframe='1m', pairs=1) -> None:
         self.init_db()
-        for pair in self.api.get_pairs()[:pairs]:
-            log_q = Queue()
-            t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
-            t.daemon = True
-            t.start()
+        log_q = Queue()
+        # for pair in self.api.get_pairs()[:pairs]:
+        #     t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
+        #     t.daemon = True
+        #     t.start()
         from server import server
         server('0.0.0.0', 4000, log_q)
 
