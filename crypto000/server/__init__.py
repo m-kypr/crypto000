@@ -35,8 +35,8 @@ def server(host, port, log_q, verbose=False):
         return '<script src="js/index.js"></script>'
 
     # if not verbose:
-    import sys
-    cli = sys.modules['flask.cli']
-    cli.show_server_banner = lambda *x: None
+    # import sys
+    # cli = sys.modules['flask.cli']
+    # cli.show_server_banner = lambda *x: None
     # print(f'Running Flask on http://{host}:{port}')
     app.run(host, port)

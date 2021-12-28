@@ -15,6 +15,7 @@ function updateLog() {
 }
 function rend() {
     logElem = document.createElement('div');
+    document.appendChild(logElem);
     logInterval = setInterval(updateLog, 1000);
 }
 document.addEventListener('resize', rend);
