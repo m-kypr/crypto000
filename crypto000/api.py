@@ -15,7 +15,7 @@ class Api:
             'password': key['passphrase'],
             'timeout': 50000,
             'enableRateLimit': True,
-            'verbose': verbose,
+            'verbose': False,
         }
         for ex in ccxt.exchanges:
             if exchange == ex:
