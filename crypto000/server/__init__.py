@@ -29,7 +29,7 @@ def server(host, port, log_q, verbose=False):
         while not log_q.empty():
             log.append(log_q.get())
         if len(log) > MAX_LOG_LEN:
-            log = log[:MAX_LOG_LEN]
+            log = log[-MAX_LOG_LEN:]
         logs['1'] = log
         return jsonify(list(reversed([str(x) for x in log])))
 
