@@ -1,14 +1,15 @@
 from flask import Flask, send_from_directory, jsonify, abort, Response
 import os
 
-import logging
-log = logging.getLogger('werkzeug')
-log.setLevel(logging.ERROR)
 
 DBASE = os.path.dirname(os.path.realpath(__file__))
 
 
-def server(host, port, log_q):
+def server(host, port, log_q, verbose=False):
+    if not verbose:
+        import logging
+        log = logging.getLogger('werkzeug')
+        log.setLevel(logging.ERROR)
     app = Flask(__name__)
     logs = {'1': []}
 
@@ -33,8 +34,9 @@ def server(host, port, log_q):
     def index():
         return '<script src="js/index.js"></script>'
 
-    import sys
-    cli = sys.modules['flask.cli']
-    cli.show_server_banner = lambda *x: None
+    if not verbose:
+        import sys
+        cli = sys.modules['flask.cli']
+        cli.show_server_banner = lambda *x: None
     print(f'Running Flask on http://{host}:{port}')
     app.run(host, port)

@@ -30,6 +30,7 @@ class Crypto000:
         # print(self.api.ex.fetch_accounts())
         # print('Accounts:', self.api.get_accounts())
         self.timeframe = '1m'
+        self.verbose = verbose
 
     def init_db(self):
         host = '62.171.165.127'
@@ -507,12 +508,12 @@ class Crypto000:
     def tests(self, timeframe='1m', pairs=1) -> None:
         self.init_db()
         log_q = Queue()
-        # for pair in self.api.get_pairs()[:pairs]:
-        #     t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
-        #     t.daemon = True
-        #     t.start()
+        for pair in self.api.get_pairs()[:pairs]:
+            t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
+            t.daemon = True
+            t.start()
         from server import server
-        server('0.0.0.0', 4000, log_q)
+        server('0.0.0.0', 4000, log_q, verbose=self.verbose)
 
 
 if __name__ == '__main__':
