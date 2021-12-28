@@ -1,118 +1,32 @@
+from logging import log
 import os
 import json
-from queue import Queue
-import shutil
-import math
 import time
-from typing import Any
+from queue import Queue
+from threading import Thread
+import builtins
 
 from util import _ewma
-from database import Database, ohlcv_to_dict
+from api import Api
+from database import Database
 
-import ccxt
 import numpy as np
 
-print('ccxt version:', ccxt.__version__)
 DBASE = os.path.dirname(os.path.realpath(__file__))
-
-VERBOSE = False
 
 
 class Crypto000:
-    def __init__(self, exchange: ccxt.Exchange, key: dict) -> None:
-        self.DOHLC = os.path.join(DBASE, 'ohlc')
+    def __init__(self, key='key.json', verbose=False) -> None:
         self.DCYP = os.path.join(DBASE, 'cyp')
-        print(self.DCYP)
-        # quit()
-        # shutil.rmtree(self.DOHLC)
-        for d in [self.DOHLC, self.DCYP]:
-            if not os.path.isdir(d):
-                os.mkdir(d)
+        for d in [x for x in dir(self) if x.startswith('D')]:
+            dirname = getattr(self, d)
+            if not os.path.isdir(dirname):
+                os.mkdir(dirname)
 
-        config = {
-            'apiKey': key['apiKey'],
-            'secret': key['secret'],
-            'passphrase': key['passphrase'],
-            'password': key['passphrase'],
-            'timeout': 50000,
-            'enableRateLimit': True,
-            'verbose': VERBOSE,
-        }
-        self.ex = exchange(config=config)
-        accs = self.ex.fetch_accounts()
-        print('Accounts:', accs)
+        self.api = Api(key=key, verbose=verbose)
+        # print(self.api.ex.fetch_accounts())
+        # print('Accounts:', self.api.get_accounts())
         self.timeframe = '1m'
-
-    def get_pairs(self, curr='usdt') -> list:
-        from util import get_pairs as __get_pairs
-        return __get_pairs(self.ex)
-
-    # def get_pairs(self, curr='usdt') -> list:
-    #     return [x for x in list(self.ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()]
-
-    def get_ohlc(self, pair, limit=100, try_local=True, write_local=True) -> Any:
-        pair_path = os.path.join(self.DOHLC, pair.replace('/', '-'))
-        if try_local:
-            if os.path.isdir(pair_path):
-                for tf in os.listdir(pair_path):
-                    # TODO: Local caching
-                    if int(tf) == self.ex.parse_timeframe(self.timeframe):
-                        timeframe_path = os.path.join(pair_path, tf)
-                        for f in os.listdir(timeframe_path):
-                            ts, l = [int(x) for x in f[:-5].split('-')]
-                            te = ts + int(tf) * l
-                            last = te - int(tf)
-                            data = json.loads(
-                                open(os.path.join(timeframe_path, f), 'r').read())
-                            # xdata = [x[0] for x in data]
-                            X, O, H, L, C, V = map(list, zip(*data))
-                            x = list(
-                                range(since * 1000, last * 1000, int(tf) * 1000))
-                            Q = [O, H, L, C, V]
-                            for i in range(len(Q)):
-                                Q[i] = np.interp(x, X, Q[i])
-                            ohlc = list(map(list, zip(X, *Q)))
-                            print(len(ohlc))
-                            return
-
-        params = {}
-        if self.ex.__class__ == ccxt.kucoin:
-            params['endAt'] = 0
-
-        tfparse = self.ex.parse_timeframe(self.timeframe)
-        while True:
-            # TODO Find interval that was ticked (not all are ticked according to https://docs.kucoin.com/#get-klines)
-            # while True:
-            #     tk = self.ex.fetch_ticker(pair)
-            #     temp = self.ex.fetch_ohlcv(pair, timeframe=self.timeframe, since=math.floor(now - tfparse) * 1000, limit=1, params=params)
-            #     print(now - tk['timestamp'] / 1000, len(temp))
-            #     if bool(len(temp)): break
-            # print(f'found ticked interval {now}')
-            now = time.time()
-            padding = 1
-            since = math.floor(now - (limit + padding) * tfparse)
-            ohlc = self.ex.fetch_ohlcv(
-                pair, timeframe=self.timeframe, since=since * 1000, limit=limit + padding, params=params)
-            if len(ohlc) < limit:
-                print(f'ohlc data incomplete {len(ohlc)}<{limit}, retrying...')
-                continue
-            if len(ohlc) > limit:
-                print(f'ohlc data overflow, removing {len(ohlc) - limit}')
-                c = len(ohlc) - limit
-                ohlc = ohlc[c:]
-            break
-        if write_local:
-            if not os.path.isdir(pair_path):
-                os.mkdir(pair_path)
-            timeframe_path = os.path.join(pair_path, str(
-                self.ex.parse_timeframe(self.timeframe)))
-            if not os.path.isdir(timeframe_path):
-                os.mkdir(timeframe_path)
-            s = int(ohlc[0][0] / 1000)
-            # e = int(ohlc[-1][0] / 1000)
-            open(os.path.join(timeframe_path,
-                 f'{s}-{len(ohlc)}.json'), 'w').write(json.dumps(ohlc))
-        return ohlc
 
     def init_db(self):
         host = '62.171.165.127'
@@ -120,37 +34,103 @@ class Crypto000:
         password = 'kbq6v=d%3xk@MD2*js6w'
         db_name = 'crypto000'
         self.db = Database(host, db_name, username, password)
-        self.db.init_ex(self.ex)
+        self.db.init_ex(self.api.ex)
 
-    def test(self, pair, B, E):
-        K = 10
-        LIMIT = 1500
-        q = self.db.data(pair, '1m', LIMIT * K)
+    def websocket(self, pair: str, out_q: Queue):
+        def ping(ws, interval):
+            last_ping = time.time()
+            ws.send(json.dumps({'id': int(last_ping), 'type': 'ping'}))
+            while True:
+                now = time.time()
+                if now - last_ping + 1 > interval:
+                    ws.send(json.dumps({'id': int(now), 'type': 'ping'}))
+                    last_ping = now
+                time.sleep(.1)
+
+        from websocket import WebSocket
+        pub = self.api.ex.fetch2('bullet-public', api='public', method='POST')
+        ws = pub['data']['instanceServers'][0]
+        ws_url = ws['endpoint']
+        token = pub['data']['token']
+        ping_interval = ws['pingInterval']
+        ping_interval_sec = ping_interval / 1000
+        print(ws)
+        ws = WebSocket()
+        connectId = 'hallo1'
+        ws.connect(f'{ws_url}?token={token}&[connectId={connectId}]')
+        print(ws.recv())
+        ping_thread = Thread(target=ping, args=(ws, ping_interval / 1000, ))
+        ping_thread.daemon = True
+        ping_thread.start()
+        ws.send(json.dumps({'id': int(time.time()), 'type': 'subscribe',
+                'topic': f'/market/ticker:{pair.replace("/", "-")}', 'privateChannel': False, 'response': True}))
+        while True:
+            recv = json.loads(ws.recv())
+            if recv['type'] == 'message':
+                out_q.put(recv['data'])
+
+    def test(self, pair, timeframe, log_queue=None):
+        def print(msg, *args):
+            if log_queue:
+                log_queue.put(f'{msg} {args}')
+            else:
+                builtins.print(msg, *args)
+        B, E = map(int, open(os.path.join(
+            self.DCYP, f'{pair[:-5]}.best'), 'r').read().split(','))
+        print(pair, f"B={B}, E={E}")
+        tf = self.api.parse_tf(timeframe)
+        _t = 0
+        fee = 0.01
         roi = 0
         trades = 0
-        for k in range(K):
-            _q = q[k*1500:(k+1)*1500]
-            X = np.array([x['T'] for x in _q])
-            Y = np.array([x['C'] for x in _q])
-            b = _ewma(Y, B)
-            e = _ewma(Y, E)
-            d = b - e
-            _t = 0
-            for i in range(len(b) - 1):
-                if d[i] > 0 and d[i + 1] < 0:
-                    if _t == 0:
-                        _t = Y[i]
-                if d[i] < 0 and d[i+1] > 0:
-                    if _t != 0:
-                        net = Y[i] - _t
-                        roi += net / _t
-                        trades += 1
-        print(B, E, roi, trades)
+        dq = Queue()
+        ws_thread = Thread(target=self.websocket, args=(pair, dq, ))
+        ws_thread.daemon = True
+        ws_thread.start()
+        prev_t = 0
+        r = dq.get(block=True)
+        r_age_sum = 0
+        r_age_count = 0
+        while True:
+            now = time.time()
+            q = self.db.data(pair, timeframe, 250)
+            while True:
+                if dq.empty():
+                    break
+                r = dq.get(block=True)
+            r_t = r['time']
+            last_t = q[-1]['T']
+            r_age = now*1000 - r_t
+            last_age = now*1000 - last_t
+            r_age_sum += r_age
+            r_age_count += 1
+            # print(r_t - last_t)
+            Y = np.array([x['C'] for x in q])
+            # print(r)
+            if _t == 0:
+                buy_price = float(r['bestBid'])
+                # print(buy_price)
+                Y = np.append(Y, buy_price)
+                d = _ewma(Y, B) - _ewma(Y, E)
+                if d[-2] > 0 and d[-1] < 0:
+                    _t = Y[-1]
+                    trades += 1
+            else:
+                sell_price = float(r['bestAsk'])
+                Y = np.append(Y, sell_price)
+                d = _ewma(Y, B) - _ewma(Y, E)
+                if d[-2] < 0 and d[-1] > 0:
+                    net = Y[-1] - _t - fee * _t - fee * Y[-1]
+                    roi += net / _t
+                    trades += 1
+                    _t = 0
+            print(now, r_t - last_t, roi, trades, '     ', d[-1], d[-2])
+            time.sleep(.1)
 
-    def learn2(self, pair):
-        frames = 200
-        frame_size = 100
-        fee = 0.01
+    def learn2(self, pair, write_out=False):
+        frames = 40
+        frame_size = 250
+        fee = 0.02
         q = self.db.data(pair, '1m', frame_size * frames)
         X = np.array([x['T'] for x in q])
         Y = np.array([x['C'] for x in q])
@@ -168,21 +148,23 @@ class Crypto000:
         except Exception as e:
             print(e)
         BMAX = frame_size // 2
+        BMIN = 10
         print(BMAX)
         for f in range(frames):
             print(f'frame={f}')
             DATA = {}
             _Y = Y[f*frame_size:(f+1)*frame_size]
-            for B in range(6, BMAX):
+            for B in range(BMIN, BMAX):
                 # for i in range(1, len(Y)):
                 #     if (B, f) not in DATA:
                 if B not in DATA:
                     DATA[B] = _ewma(_Y, B)
                 b = DATA[B]
                 EMAX = B // 2
+                EMIN = BMIN // 2
                 # print(B)
                 # print(f'\r{round((B/BMAX)*100, 2)}% {EMAX} ', end='')
-                for E in range(3, EMAX):
+                for E in range(EMIN, EMAX):
                     if f'{B},{E}' not in LEARN:
                         LEARN[f'{B},{E}'] = {'roi': 0, 'trades': 1}
                     if E not in DATA:
@@ -209,12 +191,16 @@ class Crypto000:
             best = list(s.keys())[-3:]
             for x in best:
                 print(x, s[x])
+            # LEARN['BEST'] = x
             print(s[x]['roi'] / frames)
             print()
         path = os.path.join(
             self.DCYP, f'{pair[:-5]}_{frame_size}_{total_frames}.json')
-        print('output:', path)
-        open(path, 'w').write(json.dumps(LEARN))
+        if write_out:
+            print('output:', path)
+            open(path, 'w').write(json.dumps(LEARN))
+            open(os.path.join(
+                self.DCYP, f'{pair[:-5]}.best'), 'w').write(x)
         # worst = list(s.keys())[:10]
         # for x in best[-1:]:
         #     print('best', x, s[x])
@@ -247,8 +233,9 @@ class Crypto000:
         self.init_db()
         for pair in self.get_pairs()[:pairs]:
             # self.db.builder(pair, '1m')
-            self.learn2(pair)
-            # self.test(pair, B, E)
+            # self.learn2(pair, write_out=True)
+            # self.test(pair, '1m')
+            self.test2(pair, '1m')
             continue
             ohlc = self.get_ohlc(pair, limit=1500, try_local=True)
             DATA = {}
@@ -514,30 +501,31 @@ class Crypto000:
         #     f.canvas.flush_events()
         #     time.sleep( 1)
 
+    def tests(self, timeframe='1m', pairs=1) -> None:
+        self.init_db()
+        for pair in self.api.get_pairs()[:pairs]:
+            log_q = Queue()
+            t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
+            t.daemon = True
+            # t.start()
+        from server import server
+        server(log_q)
+        # self.test(pair, timeframe)
+
 
 if __name__ == '__main__':
-    import sys
-    if len(sys.argv) == 2:
-        if sys.argv[1].lower() == '-v':
-            VERBOSE = True
+    import argparse
+    parser = argparse.ArgumentParser(description='Crypto000 bot.')
+    parser.add_argument('-v', '--verbose',
+                        help='Enable verbose output', action='store_true')
+    parser.add_argument('-k', '--keyfile', help='Key.json file',
+                        type=str, default='key.json')
 
-    key = json.loads(open(os.path.join(DBASE, 'key.json'), 'r').read())
-    c = Crypto000(exchange=ccxt.kucoin, key=key)
+    args = parser.parse_args()
 
-    if len(sys.argv) == 2:
-        if sys.argv[1].lower() == 'plot':
-            pairs = os.listdir(c.DOHLC)
-            i = int(input('\n'.join([f'{i}. {pairs[i]}' for i in list(
-                range(len(pairs)))]) + f'\n[0-{len(pairs)-1}]: '))
-            path = os.path.join(c.DOHLC, pairs[i])
-            y = [x[4] for x in json.loads(
-                open(os.path.join(path, os.listdir(path)[0]), 'r').read())]
-            import matplotlib.pyplot as plt
-            plt.title(pairs[i])
-            plt.plot(y)
-            plt.show()
-            quit()
+    c = Crypto000(key=args.keyfile, verbose=args.verbose)
+
     try:
-        c.learn()
+        c.tests()
     except KeyboardInterrupt:
         quit()

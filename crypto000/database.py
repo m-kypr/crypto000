@@ -31,11 +31,11 @@ class Database:
         self.db.authenticate(username, password)
         self.latencies = {}
         self.queues = {'latency': Queue()}
-        print(self.db)
+        print('connected to database:', self.db)
 
     def init_ex(self, ex=None):
         if not ex:
-            key = json.loads(open('rewrite/key.json', 'r').read())
+            key = json.loads(open('key.json', 'r').read())
             config = {
                 'apiKey': key['apiKey'],
                 'secret': key['secret'],
@@ -54,7 +54,7 @@ class Database:
         if coll_name in self.db.list_collection_names():
             print(f'Cant init collection that already exists: {coll_name}')
             return
-        print(f'init collection {pair} with {limit} values')
+        print(f'init collection {coll_name} with {limit} values')
         coll = self.db[coll_name]
         ohlcv = self.ex.fetch_ohlcv(pair, timeframe, limit=limit)
         coll.insert_many(ohlcv_to_dict(ohlcv))
@@ -65,6 +65,8 @@ class Database:
     def average_latency(self):
         l = list(self.latencies.values())
         if len(l) > 0:
+            # from util import _ewma
+            # import numpy as np
             return sum(l)/len(l)
         return 0
 
@@ -118,6 +120,7 @@ class Database:
                     ohlcv = self.ex.fetch_ohlcv(
                         pair, timeframe, since=next_t, limit=limit)
                 except ccxt.errors.RateLimitExceeded:
+                    print('rate limit exceeded, sleeping 30s')
                     time.sleep(30)
                     continue
                 if len(ohlcv) == 0:
@@ -129,7 +132,7 @@ class Database:
                     continue
                 coll.insert_many(ohlcv_to_dict(ohlcv))
             else:
-                wait = abs(delta) - self.average_latency()
+                wait = abs(delta) - 3 - self.average_latency() * 2
                 if wait > 0:
                     print(
                         f'waiting {round(wait, 4)}s latency is {round(self.average_latency()*1000, 4)}ms')
@@ -221,7 +224,7 @@ if __name__ == '__main__':
     db = Database(host, db_name, username, password)
     db.init_ex()
     tt = []
-    for pair in get_pairs(db.ex)[:5]:
+    for pair in get_pairs(db.ex)[:3]:
         db.init_coll(pair, '1m', 100)
         bkq = Queue()
         db.queues[pair] = {'bookkeeper_log': bkq}
