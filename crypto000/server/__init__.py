@@ -32,7 +32,7 @@ def server(host, port, log_q, verbose=False):
 
     @app.route('/')
     def index():
-        return '<script src="js/index.js"></script>'
+        return '<body></body><script src="js/index.js"></script>'
 
     # if not verbose:
     # import sys
