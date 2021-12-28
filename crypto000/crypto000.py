@@ -507,10 +507,9 @@ class Crypto000:
             log_q = Queue()
             t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
             t.daemon = True
-            # t.start()
+            t.start()
         from server import server
-        server(log_q)
-        # self.test(pair, timeframe)
+        server('0.0.0.0', 4000, log_q)
 
 
 if __name__ == '__main__':
