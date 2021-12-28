@@ -24,11 +24,15 @@ def dict_to_ohlcv(dd: dict) -> list:
 MAX_LIMIT = 1500
 
 
+print('pymongo version:', pymongo.__version__)
+
+
 class Database:
     def __init__(self, host, db_name, username, password) -> None:
-        con = pymongo.MongoClient(f'mongodb://{host}:27017')
+        con = pymongo.MongoClient(f'mongodb://{host}:27017', username=username,
+                                  password=password, authSource=db_name, authMechanism='SCRAM-SHA-256')
         self.db = con[db_name]
-        self.db.authenticate(username, password)
+        # self.db.authenticate(username, password)
         self.latencies = {}
         self.queues = {'latency': Queue()}
         print('connected to database:', self.db)

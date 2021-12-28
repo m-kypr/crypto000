@@ -503,6 +503,15 @@ class Crypto000:
 
     def tests(self, timeframe='1m', pairs=1) -> None:
         self.init_db()
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:95.0) Gecko/20100101 Firefox/95.0',
+            # 'From': 'youremail@domain.com'  # This is another valid field
+        }
+        import requests as rq
+        print('requestsing')
+        r = rq.get('https://openapi-v2.kucoin.com/api/v1/currencies',
+                   headers=headers)
+        print(r.json)
         for pair in self.api.get_pairs()[:pairs]:
             log_q = Queue()
             t = Thread(target=self.test, args=(pair, timeframe, log_q, ))

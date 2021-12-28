@@ -14,20 +14,16 @@ This is ofc not good but holding a dying asset is also not good because your mon
 
 ### Steps 
 
-~~1. for every symbol pair: Past data -> generate b, e pair~~
+~~ 1. for every symbol pair: Past data -> generate b, e pair ~~
 
-2. setup live actor that trades on new data 
+~~ 2. setup live actor that trades on new data ~~
 
 3. serve api
 
 4. rich rich 
 
 
-### File formats
-- OHLC: {start unix}-{end unix-start unix}-{length}.json
-
-
 ### Potential Improvements 
 
-- Local OHLC Data caching / Database
+~~ - Local OHLC Data caching / Database ~~ 
 - Multithreaded learning 
