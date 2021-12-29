@@ -6,11 +6,11 @@ function update(api) {
         xhr.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
                 var text = JSON.parse(xhr.responseText);
-                
-                console.log(text);
-                // var newText = text.join("<br>");
-                // document.getElementById(apiName + 'Div').innerHTML = newText;
-                // logElem.innerHtml = newText;
+                let ss = "";
+                text.forEach(tt => {
+                    ss += "<br>" + new String(tt);
+                });
+                document.getElementById(apiName + 'Div').innerHtml = ss;
             }
         };
         xhr.open('GET', '/api/' + apiName, true);
