@@ -8,6 +8,7 @@ import time
 import math
 from threading import Thread
 from queue import Queue
+from api import Api
 
 
 import ccxt
@@ -30,30 +31,14 @@ print('pymongo version:', pymongo.__version__)
 
 
 class Database:
-    def __init__(self, host, db_name, username, password) -> None:
+    def __init__(self, host: str, db_name: str, username: str, password: str, api: Api) -> None:
         con = pymongo.MongoClient(f'mongodb://{host}:27017', username=username,
                                   password=password, authSource=db_name, authMechanism='SCRAM-SHA-256')
         self.db = con[db_name]
-        # self.db.authenticate(username, password)
         self.latencies = {}
         self.queues = {'latency': Queue()}
         print('connected to database:', self.db)
-
-    def init_ex(self, ex=None):
-        if not ex:
-            key = json.loads(open('key.json', 'r').read())
-            config = {
-                'apiKey': key['apiKey'],
-                'secret': key['secret'],
-                'passphrase': key['passphrase'],
-                'password': key['passphrase'],
-                'timeout': 50000,
-                'enableRateLimit': True,
-                'verbose': False,
-            }
-            self.ex = ccxt.kucoin(config=config)
-        else:
-            self.ex = ex
+        self.api = api
 
     def init_coll(self, pair, timeframe, limit):
         coll_name = f'{pair}_{timeframe}'
@@ -62,7 +47,7 @@ class Database:
             return
         print(f'init collection {coll_name} with {limit} values')
         coll = self.db[coll_name]
-        ohlcv = self.fetch_ohlcv(pair, timeframe, 0, limit=limit)
+        ohlcv = self.api.get_ohlcv(pair, timeframe, 0, limit=limit)
         coll.insert_many(ohlcv_to_dict(ohlcv))
 
     def get_coll(self, pair, timeframe):
@@ -75,11 +60,6 @@ class Database:
             # import numpy as np
             return sum(l)/len(l)
         return 0
-
-    def fetch_ohlcv(self, pair, timeframe, since, limit, params={}):
-        print('GETTING OHLCV DATA')
-        return self.ex.fetch_ohlcv(
-            symbol=pair, timeframe=timeframe, since=since, limit=limit, params=params)
 
     def fetch_ticker(self, pair, latency=True):
         start = time.time()
@@ -114,7 +94,7 @@ class Database:
 
         ticker_to_ohlc_map = {'T': 'timestamp', 'O': 'open',
                               'L': 'low', 'H': 'high', 'C': 'close', 'V': 'baseVolume'}
-        coll = self.get_coll(pair, timeframe)
+        coll = self.get_collf(pair, timeframe)
         tf = self.ex.parse_timeframe(timeframe)
         while True:
             last = coll.find_one(sort=[('T', pymongo.DESCENDING)])
@@ -129,7 +109,7 @@ class Database:
                 limit = math.ceil(delta/tf)
                 print(f'requesting {limit}')
                 try:
-                    ohlcv = self.fetch_ohlcv(
+                    ohlcv = self.api.get_ohlcv(
                         pair, timeframe, since=next_t, limit=limit)
                 except ccxt.errors.RateLimitExceeded:
                     print('rate limit exceeded, sleeping 30s')
@@ -193,7 +173,7 @@ class Database:
                     print(
                         f'missing {limit} data points between {it} and {nt}, repairing')
                     while True:
-                        ohlcv = self.fetch_ohlcv(
+                        ohlcv = self.api.get_ohlcv(
                             pair, timeframe, since=since, limit=limit)
                         if len(ohlcv) == limit:
                             break
@@ -205,7 +185,7 @@ class Database:
             since = first['T'] - tf*prepend*1000
             while True:
                 try:
-                    ohlcv = self.fetch_ohlcv(
+                    ohlcv = self.api.get_ohlcv(
                         pair, timeframe, since=since, limit=prepend)
                 except ccxt.errors.RateLimitExceeded:
                     print('rate limit exceeded, sleeping')

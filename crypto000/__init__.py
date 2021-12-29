@@ -1,4 +1,3 @@
-from logging import log
 import os
 import json
 import time
@@ -37,8 +36,7 @@ class Crypto000:
         username = 'admin1'
         password = 'kbq6v=d%3xk@MD2*js6w'
         db_name = 'crypto000'
-        self.db = Database(host, db_name, username, password)
-        self.db.init_ex(self.api.ex)
+        self.db = Database(host, db_name, username, password, self.api)
 
     def websocket(self, pair: str, out_q: Queue):
         def ping(ws, interval):
@@ -176,10 +174,10 @@ class Crypto000:
                         DATA[E] = _ewma(_Y, E)
                     d = b - DATA[E]
                     _t = 0
-                    for i in range(frame_size >> 2, len(d)):
+                    for i in range(B, len(d)):
                         if d[i-1] > 0 and d[i] < 0:
                             if _t == 0:
-                                _t = Y[i]
+                                _t = _Y[i]
                         if d[i-1] < 0 and d[i] > 0:
                             if _t != 0:
                                 fee_t = _t * fee - _Y[i] * fee
@@ -192,13 +190,14 @@ class Crypto000:
                                 _t = 0
             s = {k: v for k, v in sorted(
                 LEARN.items(), key=lambda item: item[1]['roi'])}
-            best = reversed(list(s.keys())[-3:])
+            best = list(reversed(list(s.keys())[-3:]))
             for x in best:
                 print(x, s[x])
             worst = reversed(list(s.keys())[:3])
             for x in worst:
                 print(x, s[x])
-            x = best[0]
+            if len(best) > 0:
+                x = best[0]
             print('roi per frame:', s[x]['roi'] / frames)
             print()
         path = os.path.join(
@@ -339,28 +338,3 @@ class Crypto000:
             t.start()
         from server import server
         server('0.0.0.0', 4000, queues, verbose=self.verbose)
-
-
-if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser(description='Crypto000 bot.')
-    parser.add_argument('-v', '--verbose',
-                        help='Enable verbose output', action='store_true')
-    parser.add_argument('-k', '--keyfile', help='Key.json file',
-                        type=str, default='key.json')
-    parser.add_argument('-d', '--datadir', help='Data directory',
-                        type=str, default='data')
-    parser.add_argument(
-        '-l', '--learn', help='Learn values', action='store_true')
-
-    args = parser.parse_args()
-
-    c = Crypto000(datadir=args.datadir, key=args.keyfile, verbose=args.verbose)
-
-    try:
-        if args.learn:
-            c.learns('1m', 100, 120, 1, True)
-        else:
-            c.tests('1m', 1)
-    except KeyboardInterrupt:
-        quit()
