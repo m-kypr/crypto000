@@ -1,16 +1,18 @@
 from __future__ import print_function
 import builtins as __builtin__
 
-from ccxt.base import errors
 
 from util import get_pairs
-import ccxt
-import pymongo
 import json
 import time
 import math
 from threading import Thread
 from queue import Queue
+
+
+import ccxt
+from ccxt.base import errors
+import pymongo
 
 
 def ohlcv_to_dict(ohlcv: list) -> dict:
@@ -86,11 +88,12 @@ class Database:
         coll = self.db[f'{pair}_{timeframe}']
         cc = coll.estimated_document_count()
         if limit > cc:
-            print('requested limit exceeds database size, downloading more data')
             prepend = limit - cc
+            print(
+                f'the requested {limit} exceeds database size of {cc} by {prepend}, downloading more data')
             if prepend > MAX_LIMIT:
                 mod = prepend % MAX_LIMIT
-                for i in range((prepend - mod) // MAX_LIMIT):
+                for _ in range((prepend - mod) // MAX_LIMIT):
                     self.builder(pair, timeframe,
                                  prepend=MAX_LIMIT, check_db=False)
                 prepend = mod
@@ -193,7 +196,7 @@ class Database:
                     coll.insert_many(ohlcv_to_dict(ohlcv))
             print(f'{error} database erros')
         if prepend > 0:
-            print(f'prepending {prepend} data points')
+            print(f'attempting prepend of {prepend} data points')
             since = first['T'] - tf*prepend*1000
             while True:
                 try:

@@ -1,5 +1,5 @@
-ccxt==1.64.70
-numpy
+numpy==1.20.3
+ccxt
 pymongo
 Flask 
 numba

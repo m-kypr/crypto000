@@ -79,8 +79,8 @@ class Crypto000:
                 queues['log'].put(f'{msg} {args}')
             else:
                 builtins.print(msg, *args)
-        B, E = map(int, open(os.path.join(
-            self.DCYP, f'{pair[:-5]}.best'), 'r').read().split(','))
+        B, E = map(int, json.loads(open(os.path.join(self.DCYP, 'best.json'), 'r'))[
+            pair[:-5]].split(','))
         print(pair, f"B={B}, E={E}")
         tf = self.api.parse_tf(timeframe)
         _t = 0
@@ -136,26 +136,26 @@ class Crypto000:
             print(now, r_t - last_t, roi, trades, '     ', d[-1], d[-2])
             time.sleep(.1)
 
-    def learn2(self, pair, write_out=False):
-        frames = 40
-        frame_size = 250
-        fee = 0.02
-        q = self.db.data(pair, '1m', frame_size * frames)
+    def learn(self, pair, timeframe, frame_size, frames, write_out=False):
+        """Bruteforce best window sizes for EWMA (Exponentially weighted moving average) with OHLC data.
+        """
+        fee = 0.01
+        q = self.db.data(pair, timeframe, frame_size * frames)
         X = np.array([x['T'] for x in q])
         Y = np.array([x['C'] for x in q])
         LEARN = {}
         total_frames = frames
-        try:
-            for fn in os.listdir(self.DCYP):
-                if fn.startswith(f'{pair[:-5]}_{frame_size}_'):
-                    LEARN = json.loads(
-                        open(os.path.join(self.DCYP, fn), 'r').read())
-                    loaded_frames = int(fn[-7:-5])
-                    total_frames += loaded_frames
-                    print(f'loaded learn data, frames={loaded_frames}')
-                    break
-        except Exception as e:
-            print(e)
+        # try:
+        #     for fn in os.listdir(self.DCYP):
+        #         if fn.startswith(f'{pair[:-5]}_{frame_size}_'):
+        #             LEARN = json.loads(
+        #                 open(os.path.join(self.DCYP, fn), 'r').read())
+        #             loaded_frames = int(fn[-7:-5])
+        #             total_frames += loaded_frames
+        #             print(f'loaded learn data, frames={loaded_frames}')
+        #             break
+        # except Exception as e:
+        #     print(e)
         BMAX = frame_size // 2
         BMIN = 10
         print(BMAX)
@@ -178,28 +178,31 @@ class Crypto000:
                         LEARN[f'{B},{E}'] = {'roi': 0, 'trades': 1}
                     if E not in DATA:
                         DATA[E] = _ewma(_Y, E)
-                    e = DATA[E]
-                    d = b - e
+                    d = b - DATA[E]
                     _t = 0
-                    for i in range(len(d)):
+                    for i in range(frame_size >> 2, len(d)):
                         if d[i-1] > 0 and d[i] < 0:
-                            # print(i-1)
                             if _t == 0:
                                 _t = Y[i]
                         if d[i-1] < 0 and d[i] > 0:
                             if _t != 0:
-                                # print(i-1)
-                                net = _Y[i] - _t - _t * fee - _Y[i] * fee
-                                LEARN[f'{B},{E}']['roi'] += (net / _t)
-                                LEARN[f'{B},{E}']['trades'] += 1
-                                _t = 0
-            # print(sorted([x['roi']
-            #       for x in list(LEARN.values())], reverse=False))
+                                fee_t = _t * fee - _Y[i] * fee
+                                net = _Y[i] - _t
+                                if net > 0:
+                                    print(net)
+                                    net -= fee_t
+                                    LEARN[f'{B},{E}']['roi'] += (net / _t)
+                                    LEARN[f'{B},{E}']['trades'] += 1
+                                    _t = 0
             s = {k: v for k, v in sorted(
                 LEARN.items(), key=lambda item: item[1]['roi'])}
             best = list(s.keys())[-3:]
             for x in best:
                 print(x, s[x])
+            worst = reversed(list(s.keys())[:3])
+            for x in worst:
+                print(x, s[x])
+
             # LEARN['BEST'] = x
             print(s[x]['roi'] / frames)
             print()
@@ -208,158 +211,23 @@ class Crypto000:
         if write_out:
             print('output:', path)
             open(path, 'w').write(json.dumps(LEARN))
-            open(os.path.join(
-                self.DCYP, f'{pair[:-5]}.best'), 'w').write(x)
-        # worst = list(s.keys())[:10]
-        # for x in best[-1:]:
-        #     print('best', x, s[x])
-        # for x in worst[:1]:
-        #     print('worst', x, s[x])
-        # print(best[-5:])
-        # for x in best:
-        #     print(x, s[x], x[1] / x[0])
-        # DUMB.append((x, s[x], x[0] / x[1]))
-        # best = list(s.keys())[-5:]
-        # for x in best:
-        #     print(x, s[x], x[1] / x[0])
-        # WISE.append((x, s[x], x[0] / x[1]))
-        # for x in WISE:
-        #     print(x[0][0], 'R:', x[2], 'roi:', x[1]['roi'])
-        # print()
-        # for x in DUMB:
-        #     print(x[0], 'R:', x[2], 'roi:', x[1]['roi'])
-        # return WISE[-1][0][0], WISE[-1][0][1]
-        # print([x[0][0], x[2] for x in WISE])
-        # import matplotlib.pyplot as plt
-        # plt.plot(X, DATA[x[0]])
-        # plt.plot(X, DATA[x[1]])
-        # plt.plot(X, Y)
-        # plt.show()
+            best_path = os.path.join(self.DCYP, 'best.json')
+            if not os.path.isfile(best_path):
+                open(best_path, 'w').write("{}")
+            with open(best_path, 'r+') as f:
+                f.seek(0)
+                old = json.loads(f.read())
+                old[pair[:-5]] = x
+                f.seek(0)
+                f.write(json.dumps(old))
+                f.truncate()
 
-    def learn(self, pairs=1) -> None:
-        """Bruteforce best window sizes for EWMA (Exponentially weighted moving average) with OHLC data.
-        """
+    def learns(self, timeframe, frame_size, frames, pairs=1) -> None:
         self.init_db()
-        for pair in self.get_pairs()[:pairs]:
-            # self.db.builder(pair, '1m')
-            # self.learn2(pair, write_out=True)
-            # self.test(pair, '1m')
-            self.test2(pair, '1m')
-            continue
-            ohlc = self.get_ohlc(pair, limit=1500, try_local=True)
-            DATA = {}
-            EWMA = {}
-            print(f'Learning B, E values for {pair}')
-            for B in range(4, 17):
-                DATA[B] = {}
-
-                _y = [x[4] for x in ohlc]
-                _x = [x[0] for x in ohlc]
-
-                y = np.array(_y)
-                x = np.array(_x)
-
-                _f = B + 1
-                _t = B * 45
-                print(f'B={B}, trying E from {_f} to {_t}')
-
-                import matplotlib.pyplot as plt
-                # f = plt.figure()
-                # ax = f.add_subplot(111)
-
-                for E in range(_f, _t + 1):
-                    # ax.cla()
-                    bsgnl = np.full_like(y, np.nan)
-                    ssgnl = np.full_like(y, np.nan)
-
-                    # ax.plot(x, y, 'b-')
-
-                    def b(i):
-                        if B not in EWMA:
-                            EWMA[B] = {}
-                        if i not in EWMA[B]:
-                            EWMA[B][i] = _ewma(y[:i], B)
-                        return (x[:i], EWMA[B][i])
-
-                    def e(i):
-                        if E not in EWMA:
-                            EWMA[E] = {}
-                        if i not in EWMA[E]:
-                            EWMA[E][i] = _ewma(y[:i], E)
-                        return (x[:i], EWMA[E][i])
-
-                    H = E + 1
-                    # lineB, = ax.plot(*b(H), 'g-')
-                    # lineE, = ax.plot(*e(H), 'r-')
-                    # scatterBuy = ax.scatter(x, bsgnl)
-                    # scatterSell = ax.scatter(x, ssgnl)
-                    status = False
-                    bought = 0
-                    trades = []
-                    profit = 0
-                    roi = 0
-                    for i in range(H, len(y)):
-                        bdata = b(i)
-                        edata = e(i)
-                        _b = bdata[1]
-                        _e = edata[1]
-
-                        s = _b[-1] > _e[-1]
-                        if i > 0:
-                            if s != status:
-                                if s:
-                                    bsgnl[i] = y[i]
-                                    if bought == 0:
-                                        bought = y[i]
-                                        trades.append((x[i], y[i], 0))
-                                else:
-                                    ssgnl[i] = y[i]
-                                    if bought != 0:
-                                        net = y[i] - bought
-                                        # if net > 0:
-                                        profit += net
-                                        roi += net / bought
-                                        trades.append((x[i], y[i], 1))
-                                        bought = 0
-                            status = s
-                        # lineB.set_data(*bdata)
-                        # lineE.set_data(*edata)
-                        # scatterBuy.set_offsets(np.c_[x, bsgnl])
-                        # scatterSell.set_offsets(np.c_[x, ssgnl])
-                        # f.canvas.draw()
-                        # plt.pause(.0000001)
-                        # f.canvas.flush_events()
-                    DATA[B][E] = (roi, len(trades))
-                    # print(B, E, roi, len(trades))
-
-                v = list(DATA[B].values())
-                k = list(DATA[B].keys())
-                # best E by roi_per_trade
-                EE = k[v.index(max(v, key=lambda x: x[0]/x[1]))]
-                print('EE:', EE, 'ratio:', EE / B, DATA[B][EE])
-                DATA[B]['EE'] = (EE, DATA[B][EE])
-                # ratio~10.2       profit 0.34          neg trades allowed
-                # 18.7<ratio<19.8  profit 0.35-0.36  no neg trades allowed
-                # for ratios < 7 no neg trades is better
-                #     r < 19 neg trades is better
-                #     r < 19.8 no neg trades is way better
-                #     r > 19.8 neg trades is better
-                #     r > 45 its almost the same
-                # s = json.dumps([[x/B for x in k], [x[0] for x in v]])
-                # open(os.path.join(self.DCYP, f'{pair[:-5]}-with-negative.json'), 'w').write(s)
-                # plt.plot([x/B for x in k], [x[0] for x in v])
-                # plt.show()
-
-            _DATA = {}
-            for B in DATA.keys():
-                EE, ROI = DATA[B]['EE']
-                _DATA[B] = (EE, *ROI)
-            v = list(_DATA.values())
-            k = list(_DATA.keys())
-            BB = k[v.index(max(v, key=lambda x: x[1]))]
-            print(BB, _DATA[BB])
-            open(os.path.join(self.DCYP, f'{pair[:-5]}.json'), 'w').write(
-                json.dumps({'B': BB, 'E': _DATA[BB][0], 'ROI': _DATA[BB][1]}))
+        # pairs_list = self.api.get_pairs()
+        pairs_list = ['SNX/USDT']
+        for pair in pairs_list[:pairs]:
+            self.learn(pair, timeframe, frame_size, frames, write_out=True)
 
     def live(self) -> None:
         # Order book to Buy and sell signals
@@ -530,12 +398,17 @@ if __name__ == '__main__':
                         type=str, default='key.json')
     parser.add_argument('-d', '--datadir', help='Data directory',
                         type=str, default='data')
+    parser.add_argument(
+        '-l', '--learn', help='Learn values', action='store_true')
 
     args = parser.parse_args()
 
     c = Crypto000(datadir=args.datadir, key=args.keyfile, verbose=args.verbose)
 
     try:
-        c.tests()
+        if args.learn:
+            c.learns('1m', 250, 40, 1)
+        else:
+            c.tests('1m', 1)
     except KeyboardInterrupt:
         quit()

@@ -10,7 +10,7 @@ function update(api) {
                 text.forEach(tt => {
                     arr.push(new String(tt));
                 });
-                document.getElementById(apiName + 'Div').innerHtml = arr.join("<br>");
+                document.getElementById(apiName + 'Div').innerHTML = arr.join("<br>");
             }
         };
         xhr.open('GET', '/api/' + apiName, true);
@@ -21,13 +21,17 @@ function rend() {
     let rowElem = document.createElement('div');
     rowElem.className = "row";
     rowElem.style.display = "table";
+    rowElem.style.backgroundColor = "red";
 
     let api = ["log", "trades"];
     api.forEach(apiName => {
         let div = document.createElement('div');
         div.id = apiName + "Div";
-        div.className = "col";
+        div.className = "row";
         div.style.display = "table-cell";
+        div.style.width = "100%";
+        div.style.tableLayout = "fixed";
+        div.style.borderSpacing = "10px";
         rowElem.appendChild(div);
     });
 
