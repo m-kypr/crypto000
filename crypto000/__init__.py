@@ -217,6 +217,7 @@ class Crypto000:
             f.truncate()
 
     def learn2(self, pair, timeframe, frames):
+        self.init_db()
         # coll = self.db.get_coll(pair, timeframe)
         _DATA = self.db.data(pair, timeframe, 1500*frames)
         # _DATA = list(coll.find().sort(

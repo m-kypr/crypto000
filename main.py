@@ -11,6 +11,8 @@ if __name__ == '__main__':
                         type=str, default='data')
     parser.add_argument('-p', '--port', help='Port for Api',
                         type=int, default=4001)
+    # parser.add_argument('-proxy', '--use-proxy', help='Port for Api',
+    #                     type=int, default=4001)
     parser.add_argument(
         '-l', '--learn', help='Learn values', action='store_true')
 
