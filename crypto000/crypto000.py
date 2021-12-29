@@ -158,7 +158,7 @@ class Crypto000:
         #     print(e)
         BMAX = frame_size // 2
         BMIN = 10
-        print(BMAX)
+        print('frame size:', frame_size)
         for f in range(frames):
             print(f'frame={f}')
             DATA = {}
@@ -364,7 +364,7 @@ if __name__ == '__main__':
 
     try:
         if args.learn:
-            c.learns('1m', 250, 40, 1, True)
+            c.learns('1m', 100, 120, 1, True)
         else:
             c.tests('1m', 1)
     except KeyboardInterrupt:
