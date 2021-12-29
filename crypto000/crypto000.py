@@ -73,10 +73,10 @@ class Crypto000:
             if recv['type'] == 'message':
                 out_q.put(recv['data'])
 
-    def test(self, pair, timeframe, log_queue=None):
+    def test(self, pair, timeframe, queues):
         def print(msg, *args):
-            if log_queue:
-                log_queue.put(f'{msg} {args}')
+            if queues['log']:
+                queues['log'].put(f'{msg} {args}')
             else:
                 builtins.print(msg, *args)
         B, E = map(int, open(os.path.join(
@@ -119,6 +119,8 @@ class Crypto000:
                 if d[-2] > 0 and d[-1] < 0:
                     _t = Y[-1]
                     trades += 1
+                    queues['trades'].put(
+                        {'type': 'BUY', 'time': time.time(), 'data': {'price': Y[-1]}})
             else:
                 sell_price = float(r['bestAsk'])
                 Y = np.append(Y, sell_price)
@@ -128,6 +130,9 @@ class Crypto000:
                     roi += net / _t
                     trades += 1
                     _t = 0
+                    queues['trades'].put({'type': 'SELL', 'time': time.time(), 'data': {
+                                         'oldPrice': _t, 'price': Y[-1], 'roi': roi}})
+
             print(now, r_t - last_t, roi, trades, '     ', d[-1], d[-2])
             time.sleep(.1)
 
@@ -507,13 +512,13 @@ class Crypto000:
 
     def tests(self, timeframe='1m', pairs=1) -> None:
         self.init_db()
-        log_q = Queue()
+        queues = {'log': Queue(), 'trades': Queue(), }
         for pair in self.api.get_pairs()[:pairs]:
-            t = Thread(target=self.test, args=(pair, timeframe, log_q, ))
+            t = Thread(target=self.test, args=(pair, timeframe, queues, ))
             t.daemon = True
             t.start()
         from server import server
-        server('0.0.0.0', 4000, log_q, verbose=self.verbose)
+        server('0.0.0.0', 4000, queues, verbose=self.verbose)
 
 
 if __name__ == '__main__':

@@ -6,13 +6,13 @@ DBASE = os.path.dirname(os.path.realpath(__file__))
 MAX_LOG_LEN = 1500
 
 
-def server(host, port, log_q, verbose=False):
+def server(host: str, port: int, queues: dict, verbose=False):
     if not verbose:
         import logging
         log = logging.getLogger('werkzeug')
         log.setLevel(logging.ERROR)
     app = Flask(__name__)
-    logs = {'1': []}
+    api = {'log': {'data': [], 'max_length': 1500}, 'trades': {'data': []}}
 
     @app.route('/js/<path:text>')
     def javascript(text):
@@ -25,13 +25,23 @@ def server(host, port, log_q, verbose=False):
 
     @app.route("/api/log")
     def loggy():
-        log = logs['1']
+        data = api['log']['data']
+        log_q = queues['log']
         while not log_q.empty():
-            log.append(log_q.get())
-        if len(log) > MAX_LOG_LEN:
-            log = log[-MAX_LOG_LEN:]
-        logs['1'] = log
-        return jsonify(list(reversed([str(x) for x in log])))
+            data.append(log_q.get())
+        if len(data) > api['log']['max_length']:
+            data = data[-api['log']['max_length']:]
+        api['log']['data'] = data
+        return jsonify(list(reversed([str(x) for x in data])))
+
+    @app.route("/api/trades")
+    def trades():
+        data = api['trades']['data']
+        trades_q = queues['trades']
+        while not trades_q.empty():
+            data.append(trades_q.get())
+        api['trades']['data'] = data
+        return jsonify(data)
 
     @app.route('/')
     def index():
