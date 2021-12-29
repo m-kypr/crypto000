@@ -189,7 +189,7 @@ class Crypto000:
                                 fee_t = _t * fee - _Y[i] * fee
                                 net = _Y[i] - _t
                                 if net > 0:
-                                    print(net)
+                                    # print(net)
                                     net -= fee_t
                                     LEARN[f'{B},{E}']['roi'] += (net / _t)
                                     LEARN[f'{B},{E}']['trades'] += 1
@@ -333,50 +333,6 @@ class Crypto000:
         tk = db.ex.fetch_ticker(pair)
         print(tk.keys())
         print(tk.values())
-        # frame = db.data(pair, '1m', 10000)
-        # import datetime as dt
-        # print(dt.datetime.fromtimestamp(frame[0]['T']//1000))
-        # print(len(frame))
-        # db.builder(pair, '1m')
-
-        # pairs = self.get_pairs()
-        # sq = Queue()
-        # data_q = Queue()
-        # pair = pairs[1]
-        # data_t = Thread(target=data, args=(data_q, pair, ))
-        # data_t.setDaemon(True)
-        # signal_t = Thread(target=signal, args=(data_q, pair, sq, ))
-        # signal_t.setDaemon(True)
-        # exec_t = Thread(target=execute, args=(sq, ))
-        # exec_t.setDaemon(True)
-        # data_t.start()
-        # signal_t.start()
-        # import matplotlib.pyplot as plt
-        # plt.ion()
-        # f = plt.figure()
-        # ax = f.add_subplot(111)
-        # Yp, bp, ep = None, None, None
-        # while True:
-        #     if not sq.empty():
-        #         frame, b, e = sq.get()
-        #         X, Y = zip(*frame)
-        #         print(X[-5:], Y[-5:], b[-5:], e[-5:])
-        #         if not Yp:
-        #             Yp, = ax.plot(X, Y, 'b-')
-        #         else:
-        #             Yp.set_data(X, Y)
-        #         if not bp:
-        #             bp, = ax.plot(X, b, 'g-')
-        #         else:
-        #             bp.set_data(X, b)
-        #         if not ep:
-        #             ep, = ax.plot(X, e, 'r-')
-        #             f.show()
-        #         else:
-        #             ep.set_data(X, e)
-        #     f.canvas.draw_idle()
-        #     f.canvas.flush_events()
-        #     time.sleep( 1)
 
     def tests(self, timeframe='1m', pairs=1) -> None:
         self.init_db()

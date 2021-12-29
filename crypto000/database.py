@@ -62,7 +62,7 @@ class Database:
             return
         print(f'init collection {coll_name} with {limit} values')
         coll = self.db[coll_name]
-        ohlcv = self.ex.fetch_ohlcv(pair, timeframe, limit=limit)
+        ohlcv = self.fetch_ohlcv(pair, timeframe, 0, limit=limit)
         coll.insert_many(ohlcv_to_dict(ohlcv))
 
     def get_coll(self, pair, timeframe):
@@ -75,6 +75,11 @@ class Database:
             # import numpy as np
             return sum(l)/len(l)
         return 0
+
+    def fetch_ohlcv(self, pair, timeframe, since, limit, params={}):
+        print('GETTING OHLCV DATA')
+        return self.ex.fetch_ohlcv(
+            symbol=pair, timeframe=timeframe, since=since, limit=limit, params=params)
 
     def fetch_ticker(self, pair, latency=True):
         start = time.time()
@@ -124,7 +129,7 @@ class Database:
                 limit = math.ceil(delta/tf)
                 print(f'requesting {limit}')
                 try:
-                    ohlcv = self.ex.fetch_ohlcv(
+                    ohlcv = self.fetch_ohlcv(
                         pair, timeframe, since=next_t, limit=limit)
                 except ccxt.errors.RateLimitExceeded:
                     print('rate limit exceeded, sleeping 30s')
@@ -188,7 +193,7 @@ class Database:
                     print(
                         f'missing {limit} data points between {it} and {nt}, repairing')
                     while True:
-                        ohlcv = self.ex.fetch_ohlcv(
+                        ohlcv = self.fetch_ohlcv(
                             pair, timeframe, since=since, limit=limit)
                         if len(ohlcv) == limit:
                             break
@@ -200,7 +205,7 @@ class Database:
             since = first['T'] - tf*prepend*1000
             while True:
                 try:
-                    ohlcv = self.ex.fetch_ohlcv(
+                    ohlcv = self.fetch_ohlcv(
                         pair, timeframe, since=since, limit=prepend)
                 except ccxt.errors.RateLimitExceeded:
                     print('rate limit exceeded, sleeping')
