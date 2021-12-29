@@ -61,7 +61,7 @@ class Crypto000:
         ws.connect(f'{ws_url}?token={token}&[connectId={connectId}]')
         print(ws.recv())
         ping_thread = Thread(target=ping, args=(ws, ping_interval / 1000, ))
-        ping_thread.daemon = True
+        # ping_thread.daemon = True
         ping_thread.start()
         ws.send(json.dumps({'id': int(time.time()), 'type': 'subscribe',
                 'topic': f'/market/ticker:{pair.replace("/", "-")}', 'privateChannel': False, 'response': True}))
@@ -86,7 +86,7 @@ class Crypto000:
         trades = 0
         dq = Queue()
         ws_thread = Thread(target=self.websocket, args=(pair, dq, ))
-        ws_thread.daemon = True
+        # ws_thread.daemon = True
         ws_thread.start()
         prev_t = 0
         r = dq.get(block=True)
@@ -395,7 +395,7 @@ class Crypto000:
         queues = {'log': Queue(), 'trades': Queue(), }
         for pair in self.api.get_pairs()[:pairs]:
             t = Thread(target=self.test, args=(pair, timeframe, queues, ))
-            t.daemon = True
+            # t.daemon = True
             t.start()
         from crypto000.server import server
         server('0.0.0.0', 4000, queues, verbose=self.verbose)
