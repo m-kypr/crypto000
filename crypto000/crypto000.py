@@ -136,7 +136,7 @@ class Crypto000:
             print(now, r_t - last_t, roi, trades, '     ', d[-1], d[-2])
             time.sleep(.1)
 
-    def learn(self, pair, timeframe, frame_size, frames, write_out=False):
+    def learn(self, pair, timeframe, frame_size, frames, sell_negative=False, write_out=False):
         """Bruteforce best window sizes for EWMA (Exponentially weighted moving average) with OHLC data.
         """
         fee = 0.01
@@ -188,12 +188,12 @@ class Crypto000:
                             if _t != 0:
                                 fee_t = _t * fee - _Y[i] * fee
                                 net = _Y[i] - _t
-                                if net > 0:
-                                    # print(net)
-                                    net -= fee_t
-                                    LEARN[f'{B},{E}']['roi'] += (net / _t)
-                                    LEARN[f'{B},{E}']['trades'] += 1
-                                    _t = 0
+                                net -= fee_t
+                                if sell_negative and net < 0:
+                                    continue
+                                LEARN[f'{B},{E}']['roi'] += (net / _t)
+                                LEARN[f'{B},{E}']['trades'] += 1
+                                _t = 0
             s = {k: v for k, v in sorted(
                 LEARN.items(), key=lambda item: item[1]['roi'])}
             best = list(s.keys())[-3:]
@@ -222,12 +222,13 @@ class Crypto000:
                 f.write(json.dumps(old))
                 f.truncate()
 
-    def learns(self, timeframe, frame_size, frames, pairs=1) -> None:
+    def learns(self, timeframe, frame_size, frames, pairs=1, sell_neg=False) -> None:
         self.init_db()
         # pairs_list = self.api.get_pairs()
         pairs_list = ['SNX/USDT']
         for pair in pairs_list[:pairs]:
-            self.learn(pair, timeframe, frame_size, frames, write_out=True)
+            self.learn(pair, timeframe, frame_size, frames,
+                       sell_negative=sell_neg, write_out=True)
 
     def live(self) -> None:
         # Order book to Buy and sell signals
@@ -363,7 +364,7 @@ if __name__ == '__main__':
 
     try:
         if args.learn:
-            c.learns('1m', 250, 40, 1)
+            c.learns('1m', 250, 40, 1, True)
         else:
             c.tests('1m', 1)
     except KeyboardInterrupt:
