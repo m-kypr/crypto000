@@ -79,7 +79,7 @@ class Crypto000:
                 queues['log'].put(f'{msg} {args}')
             else:
                 builtins.print(msg, *args)
-        B, E = map(int, json.loads(open(os.path.join(self.DCYP, 'best.json'), 'r'))[
+        B, E = map(int, json.loads(open(os.path.join(self.DCYP, 'best.json'), 'r').read())[
             pair[:-5]].split(','))
         print(pair, f"B={B}, E={E}")
         tf = self.api.parse_tf(timeframe)
@@ -164,15 +164,11 @@ class Crypto000:
             DATA = {}
             _Y = Y[f*frame_size:(f+1)*frame_size]
             for B in range(BMIN, BMAX):
-                # for i in range(1, len(Y)):
-                #     if (B, f) not in DATA:
                 if B not in DATA:
                     DATA[B] = _ewma(_Y, B)
                 b = DATA[B]
                 EMAX = B // 2
                 EMIN = BMIN // 2
-                # print(B)
-                # print(f'\r{round((B/BMAX)*100, 2)}% {EMAX} ', end='')
                 for E in range(EMIN, EMAX):
                     if f'{B},{E}' not in LEARN:
                         LEARN[f'{B},{E}'] = {'roi': 0, 'trades': 1}
@@ -196,14 +192,13 @@ class Crypto000:
                                 _t = 0
             s = {k: v for k, v in sorted(
                 LEARN.items(), key=lambda item: item[1]['roi'])}
-            best = list(s.keys())[-3:]
+            best = reversed(list(s.keys())[-3:])
             for x in best:
                 print(x, s[x])
             worst = reversed(list(s.keys())[:3])
             for x in worst:
                 print(x, s[x])
-            x = best[-1]
-            # LEARN['BEST'] = x
+            x = best[0]
             print('roi per frame:', s[x]['roi'] / frames)
             print()
         path = os.path.join(
