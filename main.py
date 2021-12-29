@@ -18,12 +18,12 @@ if __name__ == '__main__':
 
     try:
         if args.learn:
-            c.learns('1m', 50, 500, 10, sell_neg=True, write_out=False)
+            c.learn2('SNX/USDT', '1m', 100)
+            # c.learns('1m', 50, 500, 10, sell_neg=True, write_out=False)
         else:
             c.tests('1m', 1)
     except KeyboardInterrupt:
         quit()
-
 
 
 # def init():
