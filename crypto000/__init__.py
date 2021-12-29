@@ -15,7 +15,7 @@ DBASE = os.path.dirname(os.path.realpath(__file__))
 
 
 class Crypto000:
-    def __init__(self, datadir='data', key='key.json', verbose=False) -> None:
+    def __init__(self, datadir='data', key='key.json', verbose=False, port=4001) -> None:
         if not datadir.startswith('/'):
             self.DCYP = os.path.join(DBASE, datadir)
         else:
@@ -25,6 +25,7 @@ class Crypto000:
             if not os.path.isdir(dirname):
                 os.mkdir(dirname)
 
+        self.port = port
         self.api = Api(key=key, verbose=verbose)
         print('Accounts:', self.api.get_accounts())
         self.timeframe = '1m'
@@ -398,4 +399,4 @@ class Crypto000:
             # t.daemon = True
             t.start()
         from crypto000.server import server
-        server('0.0.0.0', 4000, queues, verbose=self.verbose)
+        server('0.0.0.0', self.port, queues, verbose=self.verbose)

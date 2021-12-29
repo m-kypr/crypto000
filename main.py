@@ -9,12 +9,15 @@ if __name__ == '__main__':
                         type=str, default='key.json')
     parser.add_argument('-d', '--datadir', help='Data directory',
                         type=str, default='data')
+    parser.add_argument('-p', '--port', help='Port for Api',
+                        type=int, default=4001)
     parser.add_argument(
         '-l', '--learn', help='Learn values', action='store_true')
 
     args = parser.parse_args()
 
-    c = Crypto000(datadir=args.datadir, key=args.keyfile, verbose=args.verbose)
+    c = Crypto000(datadir=args.datadir, key=args.keyfile,
+                  verbose=args.verbose, port=args.port)
 
     try:
         if args.learn:
