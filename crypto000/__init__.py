@@ -276,7 +276,9 @@ class Crypto000:
             sort = sorted(data.items(), key=lambda x: x[1])
             print()
             print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[-3:]])
-            # print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[:3]])
+        open('learn.join', 'w').write(json.dumps(
+            [[f'{x[0][0]},{x[0][1]}', x[1]] for x in sort]))
+        # print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[:3]])
 
     def learns(self, timeframe, frame_size, frames, pairs=1, sell_neg=False, write_out=True) -> None:
         self.init_db()

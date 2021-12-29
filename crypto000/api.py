@@ -42,7 +42,6 @@ class Api:
         return self.ex.fetch_accounts()
 
     def get_ohlcv(self, pair, timeframe, since, limit, params={}) -> list:
-        print('GET OHLCV!!')
         return self.ex.fetch_ohlcv(pair, timeframe, since, limit, params)
 
     def get_ticker(self, pair):
