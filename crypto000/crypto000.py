@@ -202,9 +202,9 @@ class Crypto000:
             worst = reversed(list(s.keys())[:3])
             for x in worst:
                 print(x, s[x])
-
+            x = best[-1]
             # LEARN['BEST'] = x
-            print(s[x]['roi'] / frames)
+            print('roi per frame:', s[x]['roi'] / frames)
             print()
         path = os.path.join(
             self.DCYP, f'{pair[:-5]}_{frame_size}_{total_frames}.json')
