@@ -6,11 +6,11 @@ function update(api) {
         xhr.onreadystatechange = function () {
             if (this.readyState == 4 && this.status == 200) {
                 var text = JSON.parse(xhr.responseText);
-                let ss = "";
+                var arr = [];
                 text.forEach(tt => {
-                    ss += "<br>" + new String(tt);
+                    arr.push(new String(tt));
                 });
-                document.getElementById(apiName + 'Div').innerHtml = ss;
+                document.getElementById(apiName + 'Div').innerHtml = arr.join("<br>");
             }
         };
         xhr.open('GET', '/api/' + apiName, true);
@@ -27,6 +27,7 @@ function rend() {
         let div = document.createElement('div');
         div.id = apiName + "Div";
         div.className = "col";
+        div.style.display = "table-cell";
         rowElem.appendChild(div);
     });
 
