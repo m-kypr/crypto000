@@ -397,5 +397,5 @@ class Crypto000:
             t = Thread(target=self.test, args=(pair, timeframe, queues, ))
             t.daemon = True
             t.start()
-        from server import server
+        from crypto000.server import server
         server('0.0.0.0', 4000, queues, verbose=self.verbose)
