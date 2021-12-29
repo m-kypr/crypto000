@@ -18,8 +18,23 @@ if __name__ == '__main__':
 
     try:
         if args.learn:
-            c.learns('1m', 100, 140, 1, True)
+            c.learns('1m', 50, 500, 10, sell_neg=True, write_out=False)
         else:
             c.tests('1m', 1)
     except KeyboardInterrupt:
         quit()
+
+
+
+# def init():
+#     host = '62.171.165.127'
+#     username = 'admin1'
+#     password = 'kbq6v=d%3xk@MD2*js6w'
+#     db_name = 'crypto000'
+#     db = Database(host, db_name, username, password, Api())
+#     pair = 'SNX/USDT'
+#     c = db.get_coll(pair, '1m')
+#     learn2(c, frames=100)
+#     # _DATA = list(c.find().sort(
+#     #     [('T', pymongo.ASCENDING)]).limit(1500*12))[-1500:]
+#     # plot('D', 0.01, True, 10, 5, 0.5, np.array([x['C'] for x in _DATA]))

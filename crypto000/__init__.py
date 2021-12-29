@@ -5,9 +5,9 @@ from queue import Queue
 from threading import Thread
 import builtins
 
-from util import _ewma
-from api import Api
-from database import Database
+from crypto000.util import _ewma
+from crypto000.api import Api
+from crypto000.database import Database
 
 import numpy as np
 
@@ -26,8 +26,7 @@ class Crypto000:
                 os.mkdir(dirname)
 
         self.api = Api(key=key, verbose=verbose)
-        # print(self.api.ex.fetch_accounts())
-        # print('Accounts:', self.api.get_accounts())
+        print('Accounts:', self.api.get_accounts())
         self.timeframe = '1m'
         self.verbose = verbose
 
@@ -137,7 +136,7 @@ class Crypto000:
     def learn(self, pair, timeframe, frame_size, frames, sell_negative=False, write_out=False):
         """Bruteforce best window sizes for EWMA (Exponentially weighted moving average) with OHLC data.
         """
-        fee = 0.01
+        fee = 0.00
         q = self.db.data(pair, timeframe, frame_size * frames)
         X = np.array([x['T'] for x in q])
         Y = np.array([x['C'] for x in q])
@@ -158,7 +157,7 @@ class Crypto000:
         BMIN = 10
         print('frame size:', frame_size)
         for f in range(frames):
-            print(f'frame={f}')
+            print(f'frame={f+1}/{frames}')
             DATA = {}
             _Y = Y[f*frame_size:(f+1)*frame_size]
             for B in range(BMIN, BMAX):
@@ -183,7 +182,7 @@ class Crypto000:
                                 fee_t = _t * fee - _Y[i] * fee
                                 net = _Y[i] - _t
                                 net -= fee_t
-                                if sell_negative and net < 0:
+                                if not sell_negative and net < 0:
                                     continue
                                 LEARN[f'{B},{E}']['roi'] += (net / _t)
                                 LEARN[f'{B},{E}']['trades'] += 1
@@ -192,37 +191,99 @@ class Crypto000:
                 LEARN.items(), key=lambda item: item[1]['roi'])}
             best = list(reversed(list(s.keys())[-3:]))
             for x in best:
-                print(x, s[x])
+                print(x, s[x], s[x]['roi'] / s[x]['trades'])
             worst = reversed(list(s.keys())[:3])
             for x in worst:
                 print(x, s[x])
             if len(best) > 0:
                 x = best[0]
-            print('roi per frame:', s[x]['roi'] / frames)
+            # print('roi per frame:', s[x]['roi'] / frames)
             print()
         path = os.path.join(
             self.DCYP, f'{pair[:-5]}_{frame_size}_{total_frames}.json')
         if write_out:
             print('output:', path)
             open(path, 'w').write(json.dumps(LEARN))
-            best_path = os.path.join(self.DCYP, 'best.json')
-            if not os.path.isfile(best_path):
-                open(best_path, 'w').write("{}")
-            with open(best_path, 'r+') as f:
-                f.seek(0)
-                old = json.loads(f.read())
-                old[pair[:-5]] = x
-                f.seek(0)
-                f.write(json.dumps(old))
-                f.truncate()
+        best_path = os.path.join(self.DCYP, 'best.json')
+        if not os.path.isfile(best_path):
+            open(best_path, 'w').write("{}")
+        with open(best_path, 'r+') as f:
+            f.seek(0)
+            old = json.loads(f.read())
+            old[pair[:-5]] = x
+            f.seek(0)
+            f.write(json.dumps(old))
+            f.truncate()
 
-    def learns(self, timeframe, frame_size, frames, pairs=1, sell_neg=False) -> None:
+    def learn2(self, pair, timeframe, frames):
+        # coll = self.db.get_coll(pair, timeframe)
+        _DATA = self.db.data(pair, timeframe, 1500*frames)
+        # _DATA = list(coll.find().sort(
+        #     [('T', pymongo.ASCENDING)]).limit(1500*frames))
+        data = {}
+        for f in range(frames):
+            DATA = _DATA[1500*f:(f+1)*1500]
+            Y = np.array([x['C'] for x in DATA])
+            # X = np.arange(len(Y))
+            # Y_avg = sum(Y)/len(Y)
+            fee = .01
+            bmax = 200
+            emin = 3
+            ewma = {}
+            for b in range(emin + 1, bmax + 1):
+                if b not in ewma:
+                    ewma[b] = _ewma(Y, b)
+                B = ewma[b]
+                print(f'\rframe={f+1} {b}/{bmax} ', end='', flush=True)
+                for e in range(emin, b - 3):
+                    if (b, e) not in data:
+                        data[(b, e)] = 0
+                    if e not in ewma:
+                        ewma[e] = _ewma(Y, e)
+                    E = ewma[e]
+                    D = B - E
+                    # D_sum = np.array([D[b]] * b)
+                    # for i in range(b, len(Y)):
+                    #     D_sum = np.append(D_sum, (D_sum[-1]+D[i]))
+                    M = D
+                    sell, buy = [], []
+                    s = 0
+                    roi = 0
+                    for i in range(b, len(Y)):
+                        if M[i-1] > 0 and M[i] < 0:
+                            if s == 0:
+                                s = Y[i]
+                                buy.append(i)
+                        if M[i-1] < 0 and M[i] > 0:
+                            if s != 0:
+                                fee_price = s * fee + Y[i] * fee
+                                net = Y[i] - s - fee_price
+                                if net > 0:
+                                    roi += net / s
+                                    s = 0
+                                    sell.append(i)
+                    if s != 0:
+                        fee_price = s * fee - Y[i] * fee
+                        net = Y[i] - s
+                        net -= fee_price
+                        roi += net / s
+                        sell.append(i)
+
+                    data[(b, e)] += roi
+                    # print(roi)
+            sort = sorted(data.items(), key=lambda x: x[1])
+            print()
+            print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[-3:]])
+            # print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[:3]])
+
+    def learns(self, timeframe, frame_size, frames, pairs=1, sell_neg=False, write_out=True) -> None:
         self.init_db()
-        # pairs_list = self.api.get_pairs()
-        pairs_list = ['SNX/USDT']
+        pairs_list = self.api.get_pairs()
+        # pairs_list = ['SNX/USDT']
         for pair in pairs_list[:pairs]:
+            self.db.init_coll(pair, timeframe, 50)
             self.learn(pair, timeframe, frame_size, frames,
-                       sell_negative=sell_neg, write_out=True)
+                       sell_negative=sell_neg, write_out=write_out)
 
     def live(self) -> None:
         # Order book to Buy and sell signals

@@ -1,18 +1,13 @@
-from __future__ import print_function
 import builtins as __builtin__
 
-
-from util import get_pairs
-import json
 import time
 import math
 from threading import Thread
 from queue import Queue
-from api import Api
 
+from crypto000.api import Api
 
 import ccxt
-from ccxt.base import errors
 import pymongo
 
 
@@ -42,12 +37,14 @@ class Database:
 
     def init_coll(self, pair, timeframe, limit):
         coll_name = f'{pair}_{timeframe}'
+        tf = self.api.parse_tf(timeframe)
         if coll_name in self.db.list_collection_names():
             print(f'Cant init collection that already exists: {coll_name}')
             return
         print(f'init collection {coll_name} with {limit} values')
         coll = self.db[coll_name]
-        ohlcv = self.api.get_ohlcv(pair, timeframe, 0, limit=limit)
+        ohlcv = self.api.get_ohlcv(
+            pair, timeframe, since=time.time()*1000-(tf+1)*1000*limit, limit=limit)
         coll.insert_many(ohlcv_to_dict(ohlcv))
 
     def get_coll(self, pair, timeframe):
@@ -56,14 +53,12 @@ class Database:
     def average_latency(self):
         l = list(self.latencies.values())
         if len(l) > 0:
-            # from util import _ewma
-            # import numpy as np
             return sum(l)/len(l)
         return 0
 
     def fetch_ticker(self, pair, latency=True):
         start = time.time()
-        tk = self.ex.fetch_ticker(pair)
+        tk = self.api.get_ticker(pair)
         end = time.time()
         self.queues['latency'].put((end, end-start))
         # self.latencies[end] = end - start
@@ -95,7 +90,7 @@ class Database:
         ticker_to_ohlc_map = {'T': 'timestamp', 'O': 'open',
                               'L': 'low', 'H': 'high', 'C': 'close', 'V': 'baseVolume'}
         coll = self.get_collf(pair, timeframe)
-        tf = self.ex.parse_timeframe(timeframe)
+        tf = self.api.parse_tf(timeframe)
         while True:
             last = coll.find_one(sort=[('T', pymongo.DESCENDING)])
             last_t = last['T']
@@ -124,41 +119,41 @@ class Database:
                     continue
                 coll.insert_many(ohlcv_to_dict(ohlcv))
             else:
-                wait = abs(delta) - 3 - self.average_latency() * 2
-                if wait > 0:
-                    print(
-                        f'waiting {round(wait, 4)}s latency is {round(self.average_latency()*1000, 4)}ms')
-                    time.sleep(wait)
-                _tk = last
-                while True:
-                    tk = self.fetch_ticker(pair)
-                    for k, v in ticker_to_ohlc_map.items():
-                        tk[k] = tk[v]
-                    if tk['T'] == next_t:
-                        break
-                    if tk['T'] > next_t:
-                        for word in ticker_to_ohlc_map.keys():
-                            x1, y1 = _tk['T'], _tk[word]
-                            x2, y2 = tk['T'], tk[word]
-                            x = next_t
-                            y = y1 * (1 - (x - x1) / (x2 - x1)) + \
-                                y2 * (1 - (x2 - x) / (x2 - x1))
-                            # print(f'{word} li: {y1, y, y2}')
-                            tk[word] = y
-                        tk['T'] = next_t
-                        break
-                    _tk = tk
-                new_tk = {}
-                for k in ticker_to_ohlc_map.keys():
-                    new_tk[k] = tk[k]
-                coll.insert_one(new_tk)
+                time.sleep(1)
+                # wait = abs(delta) - 3 - self.average_latency() * 2
+                # if wait > 0:
+                #     print(
+                #         f'waiting {round(wait, 4)}s latency is {round(self.average_latency()*1000, 4)}ms')
+                #     time.sleep(wait)
+                # _tk = last
+                # while True:
+                #     tk = self.fetch_ticker(pair)
+                #     for k, v in ticker_to_ohlc_map.items():
+                #         tk[k] = tk[v]
+                #     if tk['T'] == next_t:
+                #         break
+                #     if tk['T'] > next_t:
+                #         for word in ticker_to_ohlc_map.keys():
+                #             x1, y1 = _tk['T'], _tk[word]
+                #             x2, y2 = tk['T'], tk[word]
+                #             x = next_t
+                #             y = y1 * (1 - (x - x1) / (x2 - x1)) + \
+                #                 y2 * (1 - (x2 - x) / (x2 - x1))
+                #             # print(f'{word} li: {y1, y, y2}')
+                #             tk[word] = y
+                #         tk['T'] = next_t
+                #         break
+                #     _tk = tk
+                # new_tk = {}
+                # for k in ticker_to_ohlc_map.keys():
+                #     new_tk[k] = tk[k]
+                # coll.insert_one(new_tk)
+
             time.sleep(.2)
 
     def builder(self, pair, timeframe, prepend=0, check_db=True):
         coll = self.get_coll(pair, timeframe)
-        # de = list(coll.find())[4:7]
-        # [coll.delete_one(x) for x in de]
-        tf = self.ex.parse_timeframe(timeframe)
+        tf = self.api.parse_tf(timeframe)
         first = coll.find_one(sort=[('T', pymongo.ASCENDING)])
         if check_db:
             error = 0
@@ -213,10 +208,9 @@ if __name__ == '__main__':
     username = 'admin1'
     password = 'kbq6v=d%3xk@MD2*js6w'
     db_name = 'crypto000'
-    db = Database(host, db_name, username, password)
-    db.init_ex()
+    db = Database(host, db_name, username, password, Api())
     tt = []
-    for pair in get_pairs(db.ex)[:3]:
+    for pair in db.api.get_pairs()[:3]:
         db.init_coll(pair, '1m', 100)
         bkq = Queue()
         db.queues[pair] = {'bookkeeper_log': bkq}

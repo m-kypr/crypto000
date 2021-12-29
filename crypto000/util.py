@@ -4,7 +4,6 @@ from numba import jit
 from numba import float64
 from numba import int64
 
-from ccxt import Exchange
 
 @jit((float64[:], int64), nopython=True, nogil=True)
 def _ewma(arr_in: np.ndarray, window: int) -> np.ndarray:
@@ -48,7 +47,7 @@ def _ewma(arr_in: np.ndarray, window: int) -> np.ndarray:
 
 
 @jit((float64[:], int64), nopython=True, nogil=True)
-def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray: 
+def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray:
     r"""Exponentialy weighted moving average specified by a decay ``window``
     assuming infinite history via the recursive form:
 
@@ -94,6 +93,6 @@ def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray:
     return ewma
 
 
-def get_pairs(ex: Exchange, curr='usdt') -> list:
-    return [x for x in list(ex.load_markets().keys()) if curr.lower() in x.split('/')[1].lower()] 
-
+# @jit((float64[:], int64), nopython=True, nogil=True)
+# def _ewma_list(arr_in: list, window: int) -> np.ndarray:
+#     return _ewma(np.array(arr_in), window)
