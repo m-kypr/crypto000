@@ -46,6 +46,7 @@ class Database:
         ohlcv = self.api.get_ohlcv(
             pair, timeframe, since=time.time()*1000-(tf+1)*1000*limit, limit=limit)
         coll.insert_many(ohlcv_to_dict(ohlcv))
+        return coll
 
     def get_coll(self, pair, timeframe):
         return self.db[f'{pair}_{timeframe}']

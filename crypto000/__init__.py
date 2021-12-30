@@ -5,17 +5,21 @@ from queue import Queue
 from threading import Thread
 import builtins
 
+from matplotlib import use
+
 from crypto000.util import _ewma
 from crypto000.api import Api
 from crypto000.database import Database
 
 import numpy as np
+import pymongo
+import matplotlib.pyplot as plt
 
 DBASE = os.path.dirname(os.path.realpath(__file__))
 
 
 class Crypto000:
-    def __init__(self, datadir='data', key='key.json', verbose=False, port=4001) -> None:
+    def __init__(self, datadir='data', verbose=False, port=4001) -> None:
         if not datadir.startswith('/'):
             self.DCYP = os.path.join(DBASE, datadir)
         else:
@@ -26,17 +30,15 @@ class Crypto000:
                 os.mkdir(dirname)
 
         self.port = port
-        self.api = Api(key=key, verbose=verbose)
-        print('Accounts:', self.api.get_accounts())
-        self.timeframe = '1m'
         self.verbose = verbose
 
-    def init_db(self):
-        host = '62.171.165.127'
-        username = 'admin1'
-        password = 'kbq6v=d%3xk@MD2*js6w'
-        db_name = 'crypto000'
-        self.db = Database(host, db_name, username, password, self.api)
+    def init_api(self, key='key.json', use_proxy=True, verbose=False):
+        if not hasattr(self, 'api'):
+            self.api = Api(key=key, use_proxy=use_proxy, verbose=verbose)
+        print('Api.get_accounts:', self.api.get_accounts())
+
+    def init_db(self, host, username, password, dbname):
+        self.db = Database(host, dbname, username, password, self.api)
 
     def websocket(self, pair: str, out_q: Queue):
         def ping(ws, interval):
@@ -216,7 +218,208 @@ class Crypto000:
             f.write(json.dumps(old))
             f.truncate()
 
-    def learn2(self, pair, timeframe, frames):
+    def learn2(self, pair, timeframe, frames, frame_size=1500, strategy='B-E', plot=False, threaded=False, write_out=True, f_start=0, f_end=0, data_queue=None):
+        coll = self.db.get_coll(pair, timeframe)
+        if threaded:
+            import multiprocessing
+            max_threads = multiprocessing.cpu_count() - 4
+            # max_threads = 1
+            threads = []
+            _frames = frames
+            overhang = _frames % max_threads
+            _frames -= overhang
+            n_thread = int(_frames / max_threads)
+            if overhang:
+                max_threads -= 1
+                t = Thread(target=self.learn2, args=(coll, overhang, frame_size,
+                                                     strategy, False, False, frames - overhang, frames, data_queue))
+            for th in range(max_threads):
+                f_start = n_thread * th
+                f_end = f_start + n_thread
+                t = Thread(target=self.learn2, args=(coll, n_thread, frame_size,
+                                                     strategy, False, False, f_start, f_end, data_queue, ))
+                threads.append(t)
+            print(f'Running {len(threads)}/{max_threads} threads')
+            try:
+                for t in threads:
+                    t.start()
+            except KeyboardInterrupt:
+                quit()
+            print(f_end, frames, overhang)
+        else:
+            DATA = list(coll.find().sort(
+                [('T', pymongo.ASCENDING)]).limit(frame_size*frames))
+            _data = {}
+            fee = .001
+            X = np.arange(frame_size)
+            if f_end == 0:
+                f_end = frames
+            print(
+                f'with strategy {strategy}, learning from frames {f_start+1}-{f_end}')
+            prevframeprice = {}
+            for f in range(f_start, f_end):
+                if f not in _data:
+                    _data[f] = {}
+                data = _data[f]
+                Y = np.array([x['C']
+                             for x in DATA[frame_size*f:(f+1)*frame_size]])
+                if strategy == 'B-E':
+                    ewma = {}
+                    bmax = 200
+                    bmin = 4
+                    ezone = 20
+                    for b in range(bmin, bmax + 1):
+                        if b not in ewma:
+                            ewma[b] = _ewma(Y, b)
+                        B = ewma[b]
+                        print(
+                            f'\rframe={f+1}  {int((b/bmax)*100)}%  ', end='', flush=True)
+                        for e in range(bmin, b):
+                            if e < b + ezone and e > b - ezone:
+                                continue
+                            if (b, e) not in data:
+                                if f == 0:
+                                    data[(b, e)] = {
+                                        'roi': 0, 'buy': [], 'sell': []}
+                                else:
+                                    data[(b, e)] = {'roi': _data[f-1]
+                                                    [(b, e)]['roi'], 'buy': [], 'sell': []}
+
+                            if e not in ewma:
+                                ewma[e] = _ewma(Y, e)
+                            E = ewma[e]
+                            M = B - E
+                            sell, buy = [], []
+                            bprice = 0
+                            if (b, e) in prevframeprice:
+                                bprice = prevframeprice[(b, e)]
+                                # print(f'got price from previous frame {bprice}')
+                            roi = 0
+                            for i in range(0, frame_size):
+                                if M[i-1] < 0 and M[i] > 0:
+                                    if bprice == 0:
+                                        bprice = Y[i]
+                                        data[(b, e)]['buy'].append(i)
+                                if M[i-1] > 0 and M[i] < 0:
+                                    if bprice != 0:
+                                        fee_price = bprice * fee + Y[i] * fee
+                                        net = Y[i] - bprice - fee_price
+                                        # if net > 0:
+                                        roi += (net / bprice)
+                                        bprice = 0
+                                        data[(b, e)]['sell'].append(i)
+                            if bprice != 0:
+                                prevframeprice[(b, e)] = bprice
+                                if f == f_end - 1:
+                                    # print(f'{b},{e} selling because last frame')
+                                    y = Y[-1]
+                                    fee_price = bprice * fee - y * fee
+                                    net = y - bprice
+                                    net -= fee_price
+                                    roi += (net / bprice)
+                                    bprice = 0
+                                    data[(b, e)]['sell'].append(i)
+                                    del prevframeprice[(b, e)]
+                            data[(b, e)]['roi'] += roi
+                elif strategy == 'B-Y':
+                    ewma = {}
+                    bmax = 200
+                    bmin = 4
+                    for b in range(bmin, bmax + 1):
+                        if b not in ewma:
+                            ewma[b] = _ewma(Y, b)
+                        B = ewma[b]
+                        print(
+                            f'\rframe={f+1}  {int((b/bmax)*100)}%  ', end='', flush=True)
+                        if b not in data:
+                            data[b] = {'roi': 0, 'buy': [], 'sell': []}
+                        M = B - Y
+                        sell, buy = [], []
+                        s = 0
+                        roi = 0
+                        for i in range(0, frame_size):
+                            if M[i-1] < 0 and M[i] > 0:
+                                if s == 0:
+                                    s = Y[i]
+                                    data[b]['buy'].append(i)
+                            if M[i-1] > 0 and M[i] < 0:
+                                if s != 0:
+                                    y = Y[i]
+                                    fee_price = s * fee + y * fee
+                                    net = y - s - fee_price
+                                    # if net > 0:
+                                    roi += net / s
+                                    s = 0
+                                    data[b]['sell'].append(i)
+                        if s != 0:
+                            y = Y_avg
+                            fee_price = s * fee - y * fee
+                            net = y - s
+                            net -= fee_price
+                            roi += net / s
+                            s = 0
+                            data[b]['sell'].append(i)
+                        data[b]['roi'] += roi
+
+                else:
+                    print(f'strategy {strategy} does not exist')
+                    return
+
+                _data[f] = data
+
+                sort = sorted(data.items(), key=lambda x: x[1]['roi'])
+                print()
+                print([(x[0], x[1]['roi']) for x in sort[-2:]])
+                # print([(x[0], x[1]['roi']) for x in sort[:3]])
+                if data_queue:
+                    data_queue.put([(x[0], x[1]['roi']) for x in sort[-3:]])
+
+                if plot:
+                    with plt.ion():
+                        plt.cla()
+                        plt.plot(X, Y, label='Y')
+                        Y_avg = Y.sum() / frame_size
+                        if strategy == 'B-E':
+                            b = sort[-1][0][0]
+                            e = sort[-1][0][1]
+                            buy = sort[-1][1]['buy']
+                            sell = sort[-1][1]['sell']
+                            plt.plot(X, ewma[b], label='B')
+                            plt.plot(X, ewma[e], label='E')
+                            plt.plot(X, ewma[b] - ewma[e] + Y_avg, label='M')
+                            plt.axhline(Y_avg, linestyle='-',
+                                        color='r', alpha=.5)
+                            plt.scatter(X[buy], Y[buy], color='g', label='buy')
+                            plt.scatter(X[sell], Y[sell],
+                                        color='r', label='sell')
+                            plt.legend()
+                            plt.pause(0.0001)
+
+            for f, data in _data.items():
+                sort = sorted(
+                    data.items(), key=lambda x: x[1]['roi'])[-100:]
+
+            if plot:
+                plt.cla()
+                print(f, [(x[0], x[1]['roi']) for x in sort[-3:]])
+                X = [x[0][0] for x in sort]
+                Y = [x[1]['roi'] for x in sort]
+                plt.scatter(X, Y, color='blue', s=8)
+                X = [x[0][1] for x in sort]
+                plt.scatter(X, Y, color='orange', s=8)
+                plt.pause(0.0001)
+                plt.show()
+
+            if write_out:
+                print(sort[-1][1]['roi'])
+                best_path = os.path.join(self.DCYP, f'{strategy}.json')
+                if not os.path.isfile(best_path):
+                    open(best_path, 'w').write('{}')
+                best_json = json.loads(open(best_path, 'r').read())
+                best_json[pair[:-5]] = sort[-1][0]
+                open(best_path, 'w').write(json.dumps(best_json))
+
+    def learn3(self, pair, timeframe, frames):
         self.init_db()
         # coll = self.db.get_coll(pair, timeframe)
         _DATA = self.db.data(pair, timeframe, 1500*frames)
@@ -280,14 +483,18 @@ class Crypto000:
             [[f'{x[0][0]},{x[0][1]}', x[1]] for x in sort]))
         # print([(round(x[0][0]/x[0][1], 2), *x) for x in sort[:3]])
 
-    def learns(self, timeframe, frame_size, frames, pairs=1, sell_neg=False, write_out=True) -> None:
-        self.init_db()
+    def learns(self, pairs=1, timeframe='1m', frames=100, frame_size=1500, strategy='B-E') -> None:
+        host = '62.171.165.127'
+        username = 'admin1'
+        password = 'kbq6v=d%3xk@MD2*js6w'
+        db_name = 'crypto000'
+        # self.init_api()
         pairs_list = self.api.get_pairs()
-        # pairs_list = ['SNX/USDT']
+        self.init_db(host, username, password, db_name)
         for pair in pairs_list[:pairs]:
             self.db.init_coll(pair, timeframe, 50)
-            self.learn(pair, timeframe, frame_size, frames,
-                       sell_negative=sell_neg, write_out=write_out)
+            self.learn2(pair, timeframe, frames,
+                        frame_size, strategy)
 
     def live(self) -> None:
         # Order book to Buy and sell signals

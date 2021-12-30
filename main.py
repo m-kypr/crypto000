@@ -18,12 +18,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    c = Crypto000(datadir=args.datadir, key=args.keyfile,
+    c = Crypto000(datadir=args.datadir,
                   verbose=args.verbose, port=args.port)
+    c.init_api(key=args.keyfile)
 
     try:
         if args.learn:
-            c.learn2('SNX/USDT', '1m', 100)
+            c.learns(frames=100)
             # c.learns('1m', 50, 500, 10, sell_neg=True, write_out=False)
         else:
             c.tests('1m', 1)

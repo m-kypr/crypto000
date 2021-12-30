@@ -32,7 +32,7 @@ class Api:
                 _exchange = getattr(ccxt, ex)
                 break
         if verbose:
-            print(config)
+            print('Api config:', config)
         self.ex: Exchange = _exchange(config=config)
 
     def get_pairs(self, curr='usdt') -> list:
