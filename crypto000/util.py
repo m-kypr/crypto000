@@ -47,7 +47,7 @@ def _ewma(arr_in: np.ndarray, window: int) -> np.ndarray:
 
 
 @jit((float64[:], int64), nopython=True, nogil=True)
-def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray: 
+def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray:
     r"""Exponentialy weighted moving average specified by a decay ``window``
     assuming infinite history via the recursive form:
 
@@ -92,3 +92,7 @@ def _ewma_infinite_hist(arr_in: np.ndarray, window: int) -> np.ndarray:
         ewma[i] = arr_in[i] * alpha + ewma[i-1] * (1 - alpha)
     return ewma
 
+
+# @jit((float64[:], int64), nopython=True, nogil=True)
+# def _ewma_list(arr_in: list, window: int) -> np.ndarray:
+#     return _ewma(np.array(arr_in), window)

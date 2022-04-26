@@ -11,3 +11,7 @@ env/
 data.py
 config.json
 data.json
+.vscode/
+old.py
+data/
+plotting.py

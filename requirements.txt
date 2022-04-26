@@ -1,4 +1,6 @@
-ccxt 
-numpy
-Flask
+numpy==1.20.3
+ccxt
+pymongo
+Flask 
 numba
+websocket-client
